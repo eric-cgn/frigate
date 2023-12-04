@@ -1,5 +1,6 @@
 import ctypes
 import logging
+import json
 
 import numpy as np
 
@@ -15,7 +16,7 @@ from pydantic import Field
 from typing_extensions import Literal
 
 from frigate.detectors.detection_api import DetectionApi
-from frigate.detectors.detector_config import BaseDetectorConfig
+from frigate.detectors.detector_config import BaseDetectorConfig, ModelTypeEnum
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,17 @@ class TensorRtDetector(DetectionApi):
                 e,
             )
 
+        logger.info(f'Loading model: {model_path}')
         with open(model_path, "rb") as f, trt.Runtime(self.trt_logger) as runtime:
+            if model_path.endswith('.engine'):
+                # ultralytics format with metadata json headers
+                metadata_len = struct.unpack('<I', f.read(4))[0]
+                self.model_metadata = json.loads(f.read(metadata_len))
+                for k in ('description', 'author', 'license', 'date', 'version', 'imgsz'):
+                    v = self.model_metadata.get(k, None)
+                    if v:
+                        logger.info(f'    {k}: {v}')
+            # else trt file, darknet format with no header
             return runtime.deserialize_cuda_engine(f.read())
 
     def _get_input_shape(self):
@@ -217,8 +228,20 @@ class TensorRtDetector(DetectionApi):
         self.nms_threshold = 0.4
         err, self.stream = cuda.cuStreamCreate(0)
         self.trt_logger = TrtLogger()
+        self.model_metadata = {}
         self.engine = self._load_engine(detector_config.model.path)
         self.input_shape = self._get_input_shape()
+        self.model_type = detector_config.model.model_type
+        if not self.model_type:
+            if self.model_metadata.get('version', '').startswith('8.'):
+                self.model_type = ModelTypeEnum.yolov8
+            else:
+                self.model_type = ModelTypeEnum.yolov5
+        if self.model_type == ModelTypeEnum.yolov8:
+            self.model_output_shape = self.engine.get_binding_shape(name='output0')
+            self.h = detector_config.model.height
+            self.w = detector_config.model.width
+            assert self.model_output_shape[0] == 1, f"batch models not supported: {self.model_output_shape[0]} != 1"
 
         try:
             self.context = self.engine.create_execution_context()
@@ -248,23 +271,60 @@ class TensorRtDetector(DetectionApi):
         del self.trt_logger
         cuda.cuCtxDestroy(self.cu_ctx)
 
+    def process_yolo(self, class_id, conf, pos):
+        # from openvino
+        return [
+            class_id,  # class ID
+            conf,  # confidence score
+            (pos[1] - (pos[3] / 2)) / self.h,  # y_min
+            (pos[0] - (pos[2] / 2)) / self.w,  # x_min
+            (pos[1] + (pos[3] / 2)) / self.h,  # y_max
+            (pos[0] + (pos[2] / 2)) / self.w,  # x_max
+        ]
+
     def _postprocess_yolo(self, trt_outputs, conf_th):
         """Postprocess TensorRT outputs.
         # Args
-            trt_outputs: a list of 2 or 3 tensors, where each tensor
+            trt_outputs (model_type == yolov8): tensor dimensioned (4+class_prob) x (number_of_boxes),
+                        x,y,w,h,<prob_of_class>
+            trt_outputs (model_type != yolov8): a list of 2 or 3 tensors, where each tensor
                         contains a multiple of 7 float32 numbers in
                         the order of [x, y, w, h, box_confidence, class_id, class_prob]
             conf_th: confidence threshold
         # Returns
             boxes, scores, classes
         """
-        # filter low-conf detections and concatenate results of all yolo layers
-        detections = []
-        for o in trt_outputs:
-            dets = o.reshape((-1, 7))
-            dets = dets[dets[:, 4] * dets[:, 6] >= conf_th]
-            detections.append(dets)
-        detections = np.concatenate(detections, axis=0)
+        if self.model_type == ModelTypeEnum.yolov8:
+            output_data = trt_outputs[0].reshape(self.model_output_shape[1:]).transpose()
+            # from here, copied from openvino (todo? architect common model output -> frigate layer to share amongst detectors)
+            scores = np.max(output_data[:, 4:], axis=1)
+            if len(scores) == 0:
+                return np.zeros((20, 6), np.float32)
+            scores = np.expand_dims(scores, axis=1)
+            # add scores to the last column
+            dets = np.concatenate((output_data, scores), axis=1)
+            # filter out lines with scores below threshold
+            dets = dets[dets[:, -1] > 0.5, :]
+            # limit to top 20 scores, descending order
+            ordered = dets[dets[:, -1].argsort()[::-1]][:20]
+            detections = np.zeros((20, 6), np.float32)
+
+            for i, object_detected in enumerate(ordered):
+                detections[i] = self.process_yolo(
+                    np.argmax(object_detected[4:-1]),
+                    object_detected[-1],
+                    object_detected[:4],
+                )
+        elif self.model_type == ModelTypeEnum.yolov5:
+            # filter low-conf detections and concatenate results of all yolo layers
+            detections = []
+            for o in trt_outputs:
+                dets = o.reshape((-1, 7))
+                dets = dets[dets[:, 4] * dets[:, 6] >= conf_th]
+                detections.append(dets)
+            detections = np.concatenate(detections, axis=0)
+        else:
+            raise NotImplementedError(f'tensorrt: unimplemented model type {self.model_type}')
 
         return detections
 
@@ -274,8 +334,9 @@ class TensorRtDetector(DetectionApi):
         # O - class id
         # 1 - score
         # 2..5 - a value between 0 and 1 of the box: [top, left, bottom, right]
-
         # normalize
+        # print('SHAPE')
+        # print(tensor_input.shape)
         if self.input_shape[-1] != trt.int8:
             tensor_input = tensor_input.astype(self.input_shape[-1])
             tensor_input /= 255.0
@@ -286,10 +347,13 @@ class TensorRtDetector(DetectionApi):
         trt_outputs = self._do_inference()
 
         raw_detections = self._postprocess_yolo(trt_outputs, self.conf_th)
+        if len(raw_detections.shape) == 2 and raw_detections.shape[1] == 6:
+            #  yolov8 handled in postprocess
+            return raw_detections
 
         if len(raw_detections) == 0:
             return np.zeros((20, 6), np.float32)
-
+        
         # raw_detections: Nx7 numpy arrays of
         #             [[x, y, w, h, box_confidence, class_id, class_prob],
 
