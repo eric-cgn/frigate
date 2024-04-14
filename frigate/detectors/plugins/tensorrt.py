@@ -1,7 +1,7 @@
 import ctypes
 import logging
 import json
-
+import struct
 import numpy as np
 
 try:
@@ -88,7 +88,7 @@ class TensorRtDetector(DetectionApi):
 
         logger.info(f'Loading model: {model_path}')
         with open(model_path, "rb") as f, trt.Runtime(self.trt_logger) as runtime:
-            if model_path.endswith('.engine'):
+            if bytes([f.peek(1)[0]]) == "{":
                 # ultralytics format with metadata json headers
                 metadata_len = struct.unpack('<I', f.read(4))[0]
                 self.model_metadata = json.loads(f.read(metadata_len))
