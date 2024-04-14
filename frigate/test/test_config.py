@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from pydantic import ValidationError
@@ -63,14 +64,16 @@ class TestConfig(unittest.TestCase):
 
     def test_config_class(self):
         frigate_config = FrigateConfig(**self.minimal)
-        assert self.minimal == frigate_config.dict(exclude_unset=True)
+        assert self.minimal == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "cpu" in runtime_config.detectors.keys()
         assert runtime_config.detectors["cpu"].type == DetectorTypeEnum.cpu
         assert runtime_config.detectors["cpu"].model.width == 320
 
-    def test_detector_custom_model_path(self):
+    @patch("frigate.detectors.detector_config.load_labels")
+    def test_detector_custom_model_path(self, mock_labels):
+        mock_labels.return_value = {}
         config = {
             "detectors": {
                 "cpu": {
@@ -110,7 +113,7 @@ class TestConfig(unittest.TestCase):
         assert runtime_config.detectors["openvino"].model.path == "/etc/hosts"
 
         assert runtime_config.model.width == 512
-        assert runtime_config.detectors["cpu"].model.width == 512
+        assert runtime_config.detectors["cpu"].model.width == 320
         assert runtime_config.detectors["edgetpu"].model.width == 160
         assert runtime_config.detectors["openvino"].model.width == 512
 
@@ -154,7 +157,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "dog" in runtime_config.cameras["back"].objects.track
@@ -180,7 +183,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert not runtime_config.cameras["back"].birdseye.enabled
@@ -206,7 +209,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].birdseye.enabled
@@ -231,7 +234,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].birdseye.enabled
@@ -260,7 +263,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "cat" in runtime_config.cameras["back"].objects.track
@@ -285,7 +288,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "dog" in runtime_config.cameras["back"].objects.filters
@@ -313,7 +316,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "dog" in runtime_config.cameras["back"].objects.filters
@@ -342,7 +345,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "dog" in runtime_config.cameras["back"].objects.filters
@@ -372,13 +375,62 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         back_camera = runtime_config.cameras["back"]
         assert "dog" in back_camera.objects.filters
         assert len(back_camera.objects.filters["dog"].raw_mask) == 2
         assert len(back_camera.objects.filters["person"].raw_mask) == 1
+
+    def test_motion_mask_relative_matches_explicit(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "record": {
+                "events": {"retain": {"default": 20, "objects": {"person": 30}}}
+            },
+            "cameras": {
+                "explicit": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {"path": "rtsp://10.0.0.1:554/video", "roles": ["detect"]}
+                        ]
+                    },
+                    "detect": {
+                        "height": 400,
+                        "width": 800,
+                        "fps": 5,
+                    },
+                    "motion": {
+                        "mask": [
+                            "0,0,200,100,600,300,800,400",
+                        ]
+                    },
+                },
+                "relative": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {"path": "rtsp://10.0.0.1:554/video", "roles": ["detect"]}
+                        ]
+                    },
+                    "detect": {
+                        "height": 400,
+                        "width": 800,
+                        "fps": 5,
+                    },
+                    "motion": {
+                        "mask": [
+                            "0.0,0.0,0.25,0.25,0.75,0.75,1.0,1.0",
+                        ]
+                    },
+                },
+            },
+        }
+        frigate_config = FrigateConfig(**config).runtime_config()
+        assert np.array_equal(
+            frigate_config.cameras["explicit"].motion.mask,
+            frigate_config.cameras["relative"].motion.mask,
+        )
 
     def test_default_input_args(self):
         config = {
@@ -403,7 +455,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "-rtsp_transport" in runtime_config.cameras["back"].ffmpeg_cmds[0]["cmd"]
@@ -432,7 +484,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "-re" in runtime_config.cameras["back"].ffmpeg_cmds[0]["cmd"]
@@ -462,7 +514,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "-re" in runtime_config.cameras["back"].ffmpeg_cmds[0]["cmd"]
@@ -497,7 +549,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "-re" in runtime_config.cameras["back"].ffmpeg_cmds[0]["cmd"]
@@ -527,7 +579,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert (
@@ -605,13 +657,48 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert isinstance(
             runtime_config.cameras["back"].zones["test"].contour, np.ndarray
         )
         assert runtime_config.cameras["back"].zones["test"].color != (0, 0, 0)
+
+    def test_zone_relative_matches_explicit(self):
+        config = {
+            "mqtt": {"host": "mqtt"},
+            "record": {
+                "events": {"retain": {"default": 20, "objects": {"person": 30}}}
+            },
+            "cameras": {
+                "back": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {"path": "rtsp://10.0.0.1:554/video", "roles": ["detect"]}
+                        ]
+                    },
+                    "detect": {
+                        "height": 400,
+                        "width": 800,
+                        "fps": 5,
+                    },
+                    "zones": {
+                        "explicit": {
+                            "coordinates": "0,0,200,100,600,300,800,400",
+                        },
+                        "relative": {
+                            "coordinates": "0.0,0.0,0.25,0.25,0.75,0.75,1.0,1.0",
+                        },
+                    },
+                }
+            },
+        }
+        frigate_config = FrigateConfig(**config).runtime_config()
+        assert np.array_equal(
+            frigate_config.cameras["back"].zones["explicit"].contour,
+            frigate_config.cameras["back"].zones["relative"].contour,
+        )
 
     def test_clips_should_default_to_global_objects(self):
         config = {
@@ -637,7 +724,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         back_camera = runtime_config.cameras["back"]
@@ -653,7 +740,7 @@ class TestConfig(unittest.TestCase):
                         "inputs": [
                             {
                                 "path": "rtsp://10.0.0.1:554/video",
-                                "roles": ["detect", "rtmp"],
+                                "roles": ["detect"],
                             },
                             {"path": "rtsp://10.0.0.1:554/record", "roles": ["record"]},
                         ]
@@ -668,7 +755,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         ffmpeg_cmds = runtime_config.cameras["back"].ffmpeg_cmds
@@ -699,7 +786,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].detect.max_disappeared == 5 * 5
@@ -727,7 +814,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].motion.frame_height == 100
@@ -755,7 +842,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert round(runtime_config.cameras["back"].motion.contour_area) == 10
@@ -784,7 +871,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.model.merged_labelmap[7] == "truck"
@@ -812,7 +899,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.model.merged_labelmap[0] == "person"
@@ -841,7 +928,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.model.merged_labelmap[0] == "person"
@@ -875,7 +962,7 @@ class TestConfig(unittest.TestCase):
         }
 
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config(PlusApi())
         assert runtime_config.model.merged_labelmap[0] == "amazon"
@@ -930,7 +1017,7 @@ class TestConfig(unittest.TestCase):
                         "width": 1920,
                         "fps": 5,
                     },
-                    "rtmp": {"enabled": True},
+                    "audio": {"enabled": True},
                 }
             },
         }
@@ -1009,7 +1096,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].detect.max_disappeared == 1
@@ -1037,7 +1124,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].detect.max_disappeared == 25
@@ -1066,7 +1153,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].detect.max_disappeared == 1
@@ -1099,7 +1186,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].snapshots.enabled
@@ -1127,7 +1214,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].snapshots.bounding_box
@@ -1160,128 +1247,12 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].snapshots.bounding_box is False
         assert runtime_config.cameras["back"].snapshots.height == 150
         assert runtime_config.cameras["back"].snapshots.enabled
-
-    def test_global_rtmp_disabled(self):
-        config = {
-            "mqtt": {"host": "mqtt"},
-            "cameras": {
-                "back": {
-                    "ffmpeg": {
-                        "inputs": [
-                            {
-                                "path": "rtsp://10.0.0.1:554/video",
-                                "roles": ["detect"],
-                            },
-                        ]
-                    },
-                    "detect": {
-                        "height": 1080,
-                        "width": 1920,
-                        "fps": 5,
-                    },
-                }
-            },
-        }
-        frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
-
-        runtime_config = frigate_config.runtime_config()
-        assert not runtime_config.cameras["back"].rtmp.enabled
-
-    def test_default_not_rtmp(self):
-        config = {
-            "mqtt": {"host": "mqtt"},
-            "cameras": {
-                "back": {
-                    "ffmpeg": {
-                        "inputs": [
-                            {
-                                "path": "rtsp://10.0.0.1:554/video",
-                                "roles": ["detect"],
-                            },
-                        ]
-                    },
-                    "detect": {
-                        "height": 1080,
-                        "width": 1920,
-                        "fps": 5,
-                    },
-                }
-            },
-        }
-        frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
-
-        runtime_config = frigate_config.runtime_config()
-        assert not runtime_config.cameras["back"].rtmp.enabled
-
-    def test_global_rtmp_merge(self):
-        config = {
-            "mqtt": {"host": "mqtt"},
-            "rtmp": {"enabled": False},
-            "cameras": {
-                "back": {
-                    "ffmpeg": {
-                        "inputs": [
-                            {
-                                "path": "rtsp://10.0.0.1:554/video",
-                                "roles": ["detect", "rtmp"],
-                            },
-                        ]
-                    },
-                    "detect": {
-                        "height": 1080,
-                        "width": 1920,
-                        "fps": 5,
-                    },
-                    "rtmp": {
-                        "enabled": True,
-                    },
-                }
-            },
-        }
-        frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
-
-        runtime_config = frigate_config.runtime_config()
-        assert runtime_config.cameras["back"].rtmp.enabled
-
-    def test_global_rtmp_default(self):
-        config = {
-            "mqtt": {"host": "mqtt"},
-            "cameras": {
-                "back": {
-                    "ffmpeg": {
-                        "inputs": [
-                            {
-                                "path": "rtsp://10.0.0.1:554/video",
-                                "roles": ["detect"],
-                            },
-                            {
-                                "path": "rtsp://10.0.0.1:554/video2",
-                                "roles": ["record"],
-                            },
-                        ]
-                    },
-                    "detect": {
-                        "height": 1080,
-                        "width": 1920,
-                        "fps": 5,
-                    },
-                }
-            },
-        }
-        frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
-
-        runtime_config = frigate_config.runtime_config()
-        assert not runtime_config.cameras["back"].rtmp.enabled
 
     def test_global_jsmpeg(self):
         config = {
@@ -1306,7 +1277,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].live.quality == 4
@@ -1333,7 +1304,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].live.quality == 8
@@ -1364,7 +1335,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].live.quality == 7
@@ -1393,7 +1364,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].timestamp_style.position == "bl"
@@ -1420,7 +1391,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].timestamp_style.position == "tl"
@@ -1428,7 +1399,6 @@ class TestConfig(unittest.TestCase):
     def test_global_timestamp_style_merge(self):
         config = {
             "mqtt": {"host": "mqtt"},
-            "rtmp": {"enabled": False},
             "timestamp_style": {"position": "br", "thickness": 2},
             "cameras": {
                 "back": {
@@ -1450,7 +1420,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].timestamp_style.position == "bl"
@@ -1479,7 +1449,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert runtime_config.cameras["back"].snapshots.retain.default == 1.5
@@ -1619,7 +1589,7 @@ class TestConfig(unittest.TestCase):
             },
         }
         frigate_config = FrigateConfig(**config)
-        assert config == frigate_config.dict(exclude_unset=True)
+        assert config == frigate_config.model_dump(exclude_unset=True)
 
         runtime_config = frigate_config.runtime_config()
         assert "dog" in runtime_config.cameras["back"].objects.filters

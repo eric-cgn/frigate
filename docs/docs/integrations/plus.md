@@ -21,7 +21,7 @@ Once logged in, you can generate an API key for Frigate in Settings.
 
 In Frigate, you can use an environment variable or a docker secret named `PLUS_API_KEY` to enable the `SEND TO FRIGATE+` buttons on the events page. Home Assistant Addon users can set it under Settings > Addons > Frigate NVR > Configuration > Options (be sure to toggle the "Show unused optional configuration options" switch).
 
-:::caution
+:::warning
 
 You cannot use the `environment_vars` section of your configuration file to set this environment variable.
 
@@ -37,11 +37,13 @@ Snapshots must be enabled to be able to submit examples to Frigate+
 
 :::
 
-![Send To Plus](/img/send-to-plus.png)
+![Send To Plus](/img/plus/send-to-plus.jpg)
+
+![Submit To Plus](/img/plus/submit-to-plus.jpg)
 
 ### Annotate and verify
 
-You can view all of your submitted images at [https://plus.frigate.video](https://plus.frigate.video). Annotations can be added by clicking an image.
+You can view all of your submitted images at [https://plus.frigate.video](https://plus.frigate.video). Annotations can be added by clicking an image. For more detailed information about labeling, see the documentation on [improving your model](../plus/improving_model.md).
 
 ![Annotate](/img/annotate.png)
 
@@ -56,7 +58,7 @@ model:
 
 Models are downloaded into the `/config/model_cache` folder and only downloaded if needed.
 
-You can override the labelmap for Frigate+ models like this:
+If needed, you can override the labelmap for Frigate+ models. This is not recommended as renaming labels will break the Submit to Frigate+ feature if the labels are not available in Frigate+.
 
 ```yaml
 model:

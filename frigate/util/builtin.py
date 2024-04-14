@@ -9,7 +9,7 @@ import urllib.parse
 from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import pytz
@@ -122,6 +122,9 @@ def clean_camera_user_pass(line: str) -> str:
 
 def escape_special_characters(path: str) -> str:
     """Cleans reserved characters to encodings for ffmpeg."""
+    if len(path) > 1000:
+        return ValueError("Input too long to check")
+
     try:
         found = re.search(REGEX_RTSP_CAMERA_USER_PASS, path).group(0)[3:-1]
         pw = found[(found.index(":") + 1) :]
@@ -136,7 +139,7 @@ def get_ffmpeg_arg_list(arg: Any) -> list:
     return arg if isinstance(arg, list) else shlex.split(arg)
 
 
-def load_labels(path, encoding="utf-8", prefill=91):
+def load_labels(path: Optional[str], encoding="utf-8", prefill=91):
     """Loads labels from file (with or without index numbers).
     Args:
       path: path to label file.
@@ -144,6 +147,9 @@ def load_labels(path, encoding="utf-8", prefill=91):
     Returns:
       Dictionary mapping indices to labels.
     """
+    if path is None:
+        return {}
+
     with open(path, "r", encoding=encoding) as f:
         labels = {index: "unknown" for index in range(prefill)}
         lines = f.readlines()
@@ -198,17 +204,27 @@ def update_yaml_from_url(file_path, url):
                 key_path.pop(i - 1)
             except ValueError:
                 pass
-        new_value = new_value_list[0]
-        update_yaml_file(file_path, key_path, new_value)
+
+        if len(new_value_list) > 1:
+            update_yaml_file(file_path, key_path, new_value_list)
+        else:
+            value = str(new_value_list[0])
+
+            if value.isnumeric():
+                value = int(value)
+
+            update_yaml_file(file_path, key_path, value)
 
 
 def update_yaml_file(file_path, key_path, new_value):
     yaml = YAML()
+    yaml.indent(mapping=2, sequence=4, offset=2)
     with open(file_path, "r") as f:
         data = yaml.load(f)
 
     data = update_yaml(data, key_path, new_value)
-
+    with open("/config/test.yaml", "w") as f:
+        yaml.dump(data, f)
     with open(file_path, "w") as f:
         yaml.dump(data, f)
 
@@ -263,6 +279,32 @@ def find_by_key(dictionary, target_key):
                 if result is not None:
                     return result
     return None
+
+
+def save_default_config(location: str):
+    try:
+        with open(location, "w") as f:
+            f.write(
+                """
+mqtt:
+  enabled: False
+
+cameras:
+  name_of_your_camera: # <------ Name the camera
+    enabled: True
+    ffmpeg:
+      inputs:
+        - path: rtsp://10.0.10.10:554/rtsp # <----- The stream you want to use for detection
+          roles:
+            - detect
+    detect:
+      enabled: False # <---- disable detection until you have a working camera feed
+      width: 1280
+      height: 720
+                    """
+            )
+    except PermissionError:
+        logger.error("Unable to write default config to /config")
 
 
 def get_tomorrow_at_time(hour: int) -> datetime.datetime:

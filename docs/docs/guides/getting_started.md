@@ -165,7 +165,7 @@ cameras:
 
 ### Step 2: Start Frigate
 
-At this point you should be able to start Frigate and see the the video feed in the UI.
+At this point you should be able to start Frigate and see the video feed in the UI.
 
 If you get an error image from the camera, this means ffmpeg was not able to get the video feed from your camera. Check the logs for error messages from ffmpeg. The default ffmpeg arguments are designed to work with H264 RTSP cameras that support TCP connections.
 
@@ -237,7 +237,7 @@ cameras:
 
 More details on available detectors can be found [here](../configuration/object_detectors.md).
 
-Restart Frigate and you should start seeing detections for `person`. If you want to track other objects, they will need to be added according to the [configuration file reference](../configuration/index.md#full-configuration-reference).
+Restart Frigate and you should start seeing detections for `person`. If you want to track other objects, they will need to be added according to the [configuration file reference](../configuration/reference.md).
 
 ### Step 5: Setup motion masks
 
@@ -245,7 +245,7 @@ Now that you have optimized your configuration for decoding the video stream, yo
 
 Now that you know where you need to mask, use the "Mask & Zone creator" in the options pane to generate the coordinates needed for your config file. More information about masks can be found [here](../configuration/masks.md).
 
-:::caution
+:::warning
 
 Note that motion masks should not be used to mark out areas where you do not want objects to be detected or to reduce false positives. They do not alter the image sent to object detection, so you can still get events and detections in areas with motion masks. These only prevent motion in these areas from initiating object detection.
 
@@ -305,7 +305,7 @@ cameras:
 
 If you don't have separate streams for detect and record, you would just add the record role to the list on the first input.
 
-By default, Frigate will retain video of all events for 10 days. The full set of options for recording can be found [here](../configuration/index.md#full-configuration-reference).
+By default, Frigate will retain video of all events for 10 days. The full set of options for recording can be found [here](../configuration/reference.md).
 
 #### Snapshots
 
@@ -325,11 +325,17 @@ cameras:
     motion: ...
 ```
 
-By default, Frigate will retain snapshots of all events for 10 days. The full set of options for snapshots can be found [here](../configuration/index.md#full-configuration-reference).
+By default, Frigate will retain snapshots of all events for 10 days. The full set of options for snapshots can be found [here](../configuration/reference.md).
 
-### Step 7: Follow up guides
+### Step 7: Complete config
 
-Now that you have a working install, you can use the following guides for additional features:
+At this point you have a complete config with basic functionality. You can see the [full config reference](../configuration/reference.md) for a complete list of configuration options.
 
-1. [Configuring go2rtc](configuring_go2rtc) - Additional live view options and RTSP relay
+### Follow up
+
+Now that you have a working install, you can use the following documentation for additional features:
+
+1. [Configuring go2rtc](configuring_go2rtc.md) - Additional live view options and RTSP relay
 2. [Home Assistant Integration](../integrations/home-assistant.md) - Integrate with Home Assistant
+3. [Masks](../configuration/masks.md)
+4. [Zones](../configuration/zones.md)

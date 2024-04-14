@@ -11,6 +11,12 @@ Frigate provides the following builtin detector types: `cpu`, `edgetpu`, `openvi
 
 The CPU detector type runs a TensorFlow Lite model utilizing the CPU without hardware acceleration. It is recommended to use a hardware accelerated detector type instead for better performance. To configure a CPU based detector, set the `"type"` attribute to `"cpu"`.
 
+:::tip
+
+If you do not have GPU or Edge TPU hardware, using the [OpenVINO Detector](#openvino-detector) is often more efficient than using the CPU detector.
+
+:::
+
 The number of threads used by the interpreter can be specified using the `"num_threads"` attribute, and defaults to `3.`
 
 A TensorFlow Lite model is provided in the container at `/cpu_model.tflite` and is used by this detector type by default. To provide your own model, bind mount the file into the container and provide the path with `model.path`.
@@ -29,17 +35,17 @@ detectors:
 
 When using CPU detectors, you can add one CPU detector per camera. Adding more detectors than the number of cameras should not improve performance.
 
-## Edge-TPU Detector
+## Edge TPU Detector
 
-The EdgeTPU detector type runs a TensorFlow Lite model utilizing the Google Coral delegate for hardware acceleration. To configure an EdgeTPU detector, set the `"type"` attribute to `"edgetpu"`.
+The Edge TPU detector type runs a TensorFlow Lite model utilizing the Google Coral delegate for hardware acceleration. To configure an Edge TPU detector, set the `"type"` attribute to `"edgetpu"`.
 
-The EdgeTPU device can be specified using the `"device"` attribute according to the [Documentation for the TensorFlow Lite Python API](https://coral.ai/docs/edgetpu/multiple-edgetpu/#using-the-tensorflow-lite-python-api). If not set, the delegate will use the first device it finds.
+The Edge TPU device can be specified using the `"device"` attribute according to the [Documentation for the TensorFlow Lite Python API](https://coral.ai/docs/edgetpu/multiple-edgetpu/#using-the-tensorflow-lite-python-api). If not set, the delegate will use the first device it finds.
 
 A TensorFlow Lite model is provided in the container at `/edgetpu_model.tflite` and is used by this detector type by default. To provide your own model, bind mount the file into the container and provide the path with `model.path`.
 
 :::tip
 
-See [common Edge-TPU troubleshooting steps](/troubleshooting/edgetpu) if the EdgeTPu is not detected.
+See [common Edge TPU troubleshooting steps](/troubleshooting/edgetpu) if the Edge TPU is not detected.
 
 :::
 
@@ -101,11 +107,11 @@ detectors:
 
 ## OpenVINO Detector
 
-The OpenVINO detector type runs an OpenVINO IR model on Intel CPU, GPU and VPU hardware. To configure an OpenVINO detector, set the `"type"` attribute to `"openvino"`.
+The OpenVINO detector type runs an OpenVINO IR model on AMD and Intel CPUs, Intel GPUs and Intel VPU hardware. To configure an OpenVINO detector, set the `"type"` attribute to `"openvino"`.
 
 The OpenVINO device to be used is specified using the `"device"` attribute according to the naming conventions in the [Device Documentation](https://docs.openvino.ai/latest/openvino_docs_OV_UG_Working_with_devices.html). Other supported devices could be `AUTO`, `CPU`, `GPU`, `MYRIAD`, etc. If not specified, the default OpenVINO device will be selected by the `AUTO` plugin.
 
-OpenVINO is supported on 6th Gen Intel platforms (Skylake) and newer. A supported Intel platform is required to use the `GPU` device with OpenVINO. The `MYRIAD` device may be run on any platform, including Arm devices. For detailed system requirements, see [OpenVINO System Requirements](https://www.intel.com/content/www/us/en/developer/tools/openvino-toolkit/system-requirements.html)
+OpenVINO is supported on 6th Gen Intel platforms (Skylake) and newer. It will also run on AMD CPUs despite having no official support for it. A supported Intel platform is required to use the `GPU` device with OpenVINO. The `MYRIAD` device may be run on any platform, including Arm devices. For detailed system requirements, see [OpenVINO System Requirements](https://www.intel.com/content/www/us/en/developer/tools/openvino-toolkit/system-requirements.html)
 
 An OpenVINO model is provided in the container at `/openvino-model/ssdlite_mobilenet_v2.xml` and is used by this detector type by default. The model comes from Intel's Open Model Zoo [SSDLite MobileNet V2](https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/public/ssdlite_mobilenet_v2) and is converted to an FP16 precision IR model. Use the model configuration shown below when using the OpenVINO detector with the default model.
 
@@ -125,7 +131,7 @@ model:
   labelmap_path: /openvino-model/coco_91cl_bkgr.txt
 ```
 
-This detector also supports some YOLO variants: YOLOX, YOLOv5, and YOLOv8 specifically. Other YOLO variants are not officially supported/tested. Frigate does not come with any yolo models preloaded, so you will need to supply your own models. This detector has been verified to work with the [yolox_tiny](https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/public/yolox-tiny) model from Intel's Open Model Zoo. You can follow [these instructions](https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/public/yolox-tiny#download-a-model-and-convert-it-into-openvino-ir-format) to retrieve the OpenVINO-compatible `yolox_tiny` model. Make sure that the model input dimensions match the `width` and `height` parameters, and `model_type` is set accordingly. See [Full Configuration Reference](/configuration/index.md#full-configuration-reference) for a list of possible `model_type` options. Below is an example of how `yolox_tiny` can be used in Frigate:
+This detector also supports YOLOX. Other YOLO variants are not officially supported/tested. Frigate does not come with any yolo models preloaded, so you will need to supply your own models. This detector has been verified to work with the [yolox_tiny](https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/public/yolox-tiny) model from Intel's Open Model Zoo. You can follow [these instructions](https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/public/yolox-tiny#download-a-model-and-convert-it-into-openvino-ir-format) to retrieve the OpenVINO-compatible `yolox_tiny` model. Make sure that the model input dimensions match the `width` and `height` parameters, and `model_type` is set accordingly. See [Full Configuration Reference](/configuration/reference.md) for a list of possible `model_type` options. Below is an example of how `yolox_tiny` can be used in Frigate:
 
 ```yaml
 detectors:
@@ -146,7 +152,7 @@ model:
 
 ### Intel NCS2 VPU and Myriad X Setup
 
-Intel produces a neural net inference accelleration chip called Myriad X. This chip was sold in their Neural Compute Stick 2 (NCS2) which has been discontinued. If intending to use the MYRIAD device for accelleration, additional setup is required to pass through the USB device. The host needs a udev rule installed to handle the NCS2 device.
+Intel produces a neural net inference acceleration chip called Myriad X. This chip was sold in their Neural Compute Stick 2 (NCS2) which has been discontinued. If intending to use the MYRIAD device for acceleration, additional setup is required to pass through the USB device. The host needs a udev rule installed to handle the NCS2 device.
 
 ```bash
 sudo usermod -a -G users "$(whoami)"
@@ -176,7 +182,7 @@ volumes:
 
 ## NVidia TensorRT Detector
 
-NVidia GPUs may be used for object detection using the TensorRT libraries. Due to the size of the additional libraries, this detector is only provided in images with the `-tensorrt` tag suffix. This detector is designed to work with Yolo models for object detection.
+Nvidia GPUs may be used for object detection using the TensorRT libraries. Due to the size of the additional libraries, this detector is only provided in images with the `-tensorrt` tag suffix, e.g. `ghcr.io/blakeblackshear/frigate:stable-tensorrt`. This detector is designed to work with Yolo models for object detection.
 
 ### Minimum Hardware Support
 
@@ -198,7 +204,7 @@ There are improved capabilities in newer GPU architectures that TensorRT can ben
 
 The model used for TensorRT must be preprocessed on the same hardware platform that they will run on. This means that each user must run additional setup to generate a model file for the TensorRT library. A script is included that will build several common models.
 
-The Frigate image will generate model files during startup if the specified model is not found.  Processed models are stored in the `/config/model_cache` folder.  Typically the `/config` path is mapped to a directory on the host already and the `model_cache` does not need to be mapped separately unless the user wants to store it in a different location on the host.
+The Frigate image will generate model files during startup if the specified model is not found. Processed models are stored in the `/config/model_cache` folder. Typically the `/config` path is mapped to a directory on the host already and the `model_cache` does not need to be mapped separately unless the user wants to store it in a different location on the host.
 
 By default, the `yolov7-320` model will be generated, but this can be overridden by specifying the `YOLO_MODELS` environment variable in Docker. One or more models may be listed in a comma-separated format, and each one will be generated. To select no model generation, set the variable to an empty string, `YOLO_MODELS=""`. Models will only be generated if the corresponding `{model}.trt` file is not present in the `model_cache` folder, so you can force a model to be regenerated by deleting it from your Frigate data folder.
 
@@ -245,7 +251,7 @@ frigate:
     - USE_FP16=false
 ```
 
-If you have multiple GPUs passed through to Frigate, you can specify which one to use for the model conversion.  The conversion script will use the first visible GPU, however in systems with mixed GPU models you may not want to use the default index for object detection.  Add the `TRT_MODEL_PREP_DEVICE` environment variable to select a specific GPU.
+If you have multiple GPUs passed through to Frigate, you can specify which one to use for the model conversion. The conversion script will use the first visible GPU, however in systems with mixed GPU models you may not want to use the default index for object detection. Add the `TRT_MODEL_PREP_DEVICE` environment variable to select a specific GPU.
 
 ```yml
 frigate:
@@ -255,7 +261,7 @@ frigate:
 
 ### Configuration Parameters
 
-The TensorRT detector can be selected by specifying `tensorrt` as the model type. The GPU will need to be passed through to the docker container using the same methods described in the [Hardware Acceleration](hardware_acceleration.md#nvidia-gpu) section. If you pass through multiple GPUs, you can select which GPU is used for a detector with the `device` configuration parameter. The `device` parameter is an integer value of the GPU index, as shown by `nvidia-smi` within the container.
+The TensorRT detector can be selected by specifying `tensorrt` as the model type. The GPU will need to be passed through to the docker container using the same methods described in the [Hardware Acceleration](hardware_acceleration.md#nvidia-gpus) section. If you pass through multiple GPUs, you can select which GPU is used for a detector with the `device` configuration parameter. The `device` parameter is an integer value of the GPU index, as shown by `nvidia-smi` within the container.
 
 The TensorRT detector uses `.trt` model files that are located in `/config/model_cache/tensorrt` by default. These model path and dimensions used will depend on which model you have generated.
 
@@ -295,103 +301,4 @@ Replace `<your_codeproject_ai_server_ip>` and `<port>` with the IP address and p
 
 To verify that the integration is working correctly, start Frigate and observe the logs for any error messages related to CodeProject.AI. Additionally, you can check the Frigate web interface to see if the objects detected by CodeProject.AI are being displayed and tracked properly.
 
-
 # Community Supported Detectors
-
-## Rockchip RKNN-Toolkit-Lite2
-
-This detector is only available if one of the following Rockchip SoCs is used:
-- RK3588/RK3588S
-- RK3568
-- RK3566
-- RK3562
-
-These SoCs come with a NPU that will highly speed up detection.
-
-### Setup
-
-Use a frigate docker image with `-rk` suffix and enable privileged mode by adding the `--privileged` flag to your docker run command or `privileged: true` to your `docker-compose.yml` file.
-
-### Configuration
-
-This `config.yml` shows all relevant options to configure the detector and explains them. All values shown are the default values (except for one). Lines that are required at least to use the detector are labeled as required, all other lines are optional.
-
-```yaml
-detectors:                            # required
-  rknn:                               # required
-    type: rknn                        # required
-    # core mask for npu
-    core_mask: 0
-
-model:                                # required
-  # name of yolov8 model or path to your own .rknn model file
-  # possible values are:
-  # - default-yolov8n
-  # - default-yolov8s
-  # - default-yolov8m
-  # - default-yolov8l
-  # - default-yolov8x
-  # - /config/model_cache/rknn/your_custom_model.rknn
-  path: default-yolov8n
-  # width and height of detection frames
-  width: 320
-  height: 320
-  # pixel format of detection frame
-  # default value is rgb but yolov models usually use bgr format
-  input_pixel_format: bgr             # required
-  # shape of detection frame
-  input_tensor: nhwc
-```
-
-Explanation for rknn specific options:
-- **core mask** controls which cores of your NPU should be used. This option applies only to SoCs with a multicore NPU (at the time of writing this in only the RK3588/S). The easiest way is to pass the value as a binary number. To do so, use the prefix `0b` and write a `0` to disable a core and a `1` to enable a core, whereas the last digit coresponds to core0, the second last to core1, etc. You also have to use the cores in ascending order (so you can't use core0 and core2; but you can use core0 and core1). Enabling more cores can reduce the inference speed, especially when using bigger models (see section below). Examples:
-  - `core_mask: 0b000` or just `core_mask: 0` let the NPU decide which cores should be used. Default and recommended value.
-  - `core_mask: 0b001` use only core0.
-  - `core_mask: 0b011` use core0 and core1.
-  - `core_mask: 0b110` use core1 and core2. **This does not** work, since core0 is disabled.
-
-### Choosing a model
-
-There are 5 default yolov8 models that differ in size and therefore load the NPU more or less. In ascending order, with the top one being the smallest and least computationally intensive model:
-
-| Model   | Size in mb |
-| ------- | ---------- |
-| yolov8n | 9          |
-| yolov8s | 25         |
-| yolov8m | 54         |
-| yolov8l | 90         |
-| yolov8x | 136        |
-
-:::tip
-
-You can get the load of your NPU with the following command:
-
-```bash
-$ cat /sys/kernel/debug/rknpu/load
->> NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,
-```
-
-:::
-
-- By default the rknn detector uses the yolov8n model (`model: path: default-yolov8n`). This model comes with the image, so no further steps than those mentioned above are necessary.
-- If you want to use a more precise model, you can pass `default-yolov8s`, `default-yolov8m`, `default-yolov8l` or `default-yolov8x` as `model: path:` option.
-  - If the model does not exist, it will be automatically downloaded to `/config/model_cache/rknn`.
-  - If your server has no internet connection, you can download the model from [this Github repository](https://github.com/MarcA711/rknn-models/releases) using another device and place it in the `config/model_cache/rknn` on your system.
-- Finally, you can also provide your own model. Note that only yolov8 models are currently supported. Moreover, you will need to convert your model to the rknn format using `rknn-toolkit2` on a x86 machine. Afterwards, you can place your `.rknn` model file in the `config/model_cache/rknn` directory on your system. Then you need to pass the path to your model using the `path` option of your `model` block like this:
-```yaml
-model:
-  path: /config/model_cache/rknn/my-rknn-model.rknn
-```
-
-:::tip
-
-When you have a multicore NPU, you can enable all cores to reduce inference times. You should consider activating all cores if you use a larger model like yolov8l. If your NPU has 3 cores (like rk3588/S SoCs), you can enable all 3 cores using:
-
-```yaml
-detectors:
-  rknn:
-    type: rknn
-    core_mask: 0b111
-```
-
-:::

@@ -33,7 +33,7 @@ RUN --mount=type=tmpfs,target=/tmp --mount=type=tmpfs,target=/var/cache/apt \
 FROM scratch AS go2rtc
 ARG TARGETARCH
 WORKDIR /rootfs/usr/local/go2rtc/bin
-ADD --link --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.8.4/go2rtc_linux_${TARGETARCH}" go2rtc
+ADD --link --chmod=755 "https://github.com/AlexxIT/go2rtc/releases/download/v1.8.5/go2rtc_linux_${TARGETARCH}" go2rtc
 
 
 ####
@@ -191,12 +191,13 @@ COPY --from=deps-rootfs / /
 RUN ldconfig
 
 EXPOSE 5000
-EXPOSE 1935
 EXPOSE 8554
 EXPOSE 8555/tcp 8555/udp
 
 # Configure logging to prepend timestamps, log to stdout, keep 0 archives and rotate on 10MB
 ENV S6_LOGGING_SCRIPT="T 1 n0 s10000000 T"
+# Do not fail on long-running download scripts
+ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
 ENTRYPOINT ["/init"]
 CMD []
@@ -237,7 +238,7 @@ CMD ["sleep", "infinity"]
 
 # Frigate web build
 # This should be architecture agnostic, so speed up the build on multiarch by not using QEMU.
-FROM --platform=$BUILDPLATFORM node:16 AS web-build
+FROM --platform=$BUILDPLATFORM node:20 AS web-build
 
 WORKDIR /work
 COPY web/package.json web/package-lock.json ./

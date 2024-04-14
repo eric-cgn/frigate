@@ -47,6 +47,12 @@ services:
     ...
 ```
 
+:::warning
+
+Users of the Snapcraft build of Docker cannot use storage locations outside your $HOME folder.
+
+:::
+
 ### Calculating required shm-size
 
 Frigate utilizes shared memory to store frames during processing. The default `shm-size` provided by Docker is **64MB**.
@@ -92,9 +98,10 @@ services:
     image: ghcr.io/blakeblackshear/frigate:stable
     shm_size: "64mb" # update for your cameras based on calculation above
     devices:
-      - /dev/bus/usb:/dev/bus/usb # passes the USB Coral, needs to be modified for other versions
-      - /dev/apex_0:/dev/apex_0 # passes a PCIe Coral, follow driver instructions here https://coral.ai/docs/m2/get-started/#2a-on-linux
-      - /dev/dri/renderD128 # for intel hwaccel, needs to be updated for your hardware
+      - /dev/bus/usb:/dev/bus/usb # Passes the USB Coral, needs to be modified for other versions
+      - /dev/apex_0:/dev/apex_0 # Passes a PCIe Coral, follow driver instructions here https://coral.ai/docs/m2/get-started/#2a-on-linux
+      - /dev/video11:/dev/video11 # For Raspberry Pi 4B
+      - /dev/dri/renderD128:/dev/dri/renderD128 # For intel hwaccel, needs to be updated for your hardware
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /path/to/your/config:/config
@@ -144,10 +151,14 @@ The community supported docker image tags for the current stable version are:
 - `stable-tensorrt-jp5` - Frigate build optimized for nvidia Jetson devices running Jetpack 5
 - `stable-tensorrt-jp4` - Frigate build optimized for nvidia Jetson devices running Jetpack 4.6
 - `stable-rk` - Frigate build for SBCs with Rockchip SoC
+- `stable-rocm` - Frigate build for [AMD GPUs and iGPUs](../configuration/object_detectors.md#amdrocm-gpu-detector), all drivers
+  - `stable-rocm-gfx900` - AMD gfx900 driver only
+  - `stable-rocm-gfx1030` - AMD gfx1030 driver only
+  - `stable-rocm-gfx1100` - AMD gfx1100 driver only
 
 ## Home Assistant Addon
 
-:::caution
+:::warning
 
 As of HomeAssistant OS 10.2 and Core 2023.6 defining separate network storage for media is supported.
 
@@ -289,7 +300,6 @@ docker run \
   --network=bridge \
   --privileged \
   --workdir=/opt/frigate \
-  -p 1935:1935 \
   -p 5000:5000 \
   -p 8554:8554 \
   -p 8555:8555 \

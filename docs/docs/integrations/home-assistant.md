@@ -64,9 +64,9 @@ When configuring the integration, you will be asked for the `URL` of your Frigat
 Home Assistant > Configuration > Integrations > Frigate > Options
 ```
 
-| Option            | Description                                                                                                                                                                                                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| RTSP URL Template | A [jinja2](https://jinja.palletsprojects.com/) template that is used to override the standard RTSP stream URL (e.g. for use with reverse proxies). This option is only shown to users who have [advanced mode](https://www.home-assistant.io/blog/2019/07/17/release-96/#advanced-mode) enabled. See [RTSP streams](#streams) below. |
+| Option            | Description                                                                                                                                                                                                                                                                                                                              |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RTSP URL Template | A [jinja2](https://jinja.palletsprojects.com/) template that is used to override the standard RTSP stream URL (e.g. for use with reverse proxies). This option is only shown to users who have [advanced mode](https://www.home-assistant.io/blog/2019/07/17/release-96/#advanced-mode) enabled. See [RTSP streams](#rtsp-stream) below. |
 
 ## Entities Provided
 
@@ -124,10 +124,6 @@ https://HA_URL/api/frigate/notifications/<event-id>/clip.mp4
 
 <a name="streams"></a>
 
-## RTMP stream
-
-RTMP is deprecated and it is recommended to switch to use RTSP restreams.
-
 ## RTSP stream
 
 In order for the live streams to function they need to be accessible on the RTSP
@@ -182,7 +178,7 @@ for how to set these.
 
 #### API URLs
 
-When multiple Frigate instances are configured, [API](#api) URLs should include an
+When multiple Frigate instances are configured, [API](#notification-api) URLs should include an
 identifier to tell Home Assistant which Frigate instance to refer to. The
 identifier used is the MQTT `client_id` parameter included in the configuration,
 and is used like so:
