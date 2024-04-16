@@ -686,7 +686,7 @@ def process_frames(
                         object_filters,
                     )
                 )
-            
+
             consolidated_detections = reduce_detections(frame_shape, detections)
 
             # if detection was run on this frame, consolidate
