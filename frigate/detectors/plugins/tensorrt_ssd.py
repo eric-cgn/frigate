@@ -243,8 +243,7 @@ class TensorRtDetector(DetectionApi):
         count = int(trt_outputs[0][0])
         class_ids = [int(x) for x in trt_outputs[2]][:count]
         scores = trt_outputs[1][:count]
-        # note: scalar scaling assumes square input for correct box
-        boxes = (np.reshape(trt_outputs[3][:4*count], (count, 4)) * self.input_shape[0][0]).astype(int)
+        boxes = np.reshape(trt_outputs[3][:4*count], (count, 4))
 
         detections = np.zeros((20, 6), np.float32)
 
@@ -259,5 +258,5 @@ class TensorRtDetector(DetectionApi):
                 boxes[i][2],
                 boxes[i][3],
             ]
-
+            # print(f"raw_detection: {detections[i]}")
         return detections
