@@ -570,7 +570,7 @@ def process_frames(
 
         regions = []
         consolidated_detections = []
-        
+
         # if detection is disabled
         if not detect_config.enabled:
             object_tracker.match_and_update(frame_time, [])
@@ -688,8 +688,8 @@ def process_frames(
                 )
             
             consolidated_detections = reduce_detections(frame_shape, detections)
+
             # if detection was run on this frame, consolidate
-            
             if len(regions) > 0:
                 tracked_detections = [
                     d
@@ -726,7 +726,7 @@ def process_frames(
                             }
                         )
             detections[obj["id"]] = {**obj, "attributes": attributes}
-        
+
         # debug object tracking
         if False:
             bgr_frame = cv2.cvtColor(
