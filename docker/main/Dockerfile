@@ -3,8 +3,8 @@
 # https://askubuntu.com/questions/972516/debian-frontend-environment-variable
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG BASE_IMAGE=debian:11
-ARG SLIM_BASE=debian:11-slim
+ARG BASE_IMAGE=python:3.10-slim-bullseye
+ARG SLIM_BASE=python:3.10-slim-bullseye
 
 FROM ${BASE_IMAGE} AS base
 

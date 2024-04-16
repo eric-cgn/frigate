@@ -1,6 +1,7 @@
 import ctypes
 import logging
-
+import json
+import struct
 import numpy as np
 
 try:
@@ -15,11 +16,11 @@ from pydantic import Field
 from typing_extensions import Literal
 
 from frigate.detectors.detection_api import DetectionApi
-from frigate.detectors.detector_config import BaseDetectorConfig
+from frigate.detectors.detector_config import BaseDetectorConfig, ModelTypeEnum
 
 logger = logging.getLogger(__name__)
 
-DETECTOR_KEY = "tensorrt"
+DETECTOR_KEY = "tensorrt_ssd"
 
 if TRT_SUPPORT:
 
@@ -77,36 +78,22 @@ class TensorRtDetector(DetectionApi):
     def _load_engine(self, model_path):
         try:
             trt.init_libnvinfer_plugins(self.trt_logger, "")
-
-            ctypes.cdll.LoadLibrary("/usr/local/lib/libyolo_layer.so")
         except OSError as e:
             logger.error(
                 "ERROR: failed to load libraries. %s",
                 e,
             )
 
+        logger.info(f'Loading model: {model_path}')
         with open(model_path, "rb") as f, trt.Runtime(self.trt_logger) as runtime:
             return runtime.deserialize_cuda_engine(f.read())
 
     def _get_input_shape(self):
-        """Get input shape of the TensorRT YOLO engine."""
+        """Get input shape of the TensorRT ssd engine."""
         binding = self.engine[0]
         assert self.engine.binding_is_input(binding)
         binding_dims = self.engine.get_binding_shape(binding)
-        if len(binding_dims) == 4:
-            return (
-                tuple(binding_dims[2:]),
-                trt.nptype(self.engine.get_binding_dtype(binding)),
-            )
-        elif len(binding_dims) == 3:
-            return (
-                tuple(binding_dims[1:]),
-                trt.nptype(self.engine.get_binding_dtype(binding)),
-            )
-        else:
-            raise ValueError(
-                "bad dims of binding %s: %s" % (binding, str(binding_dims))
-            )
+        return (binding_dims[1:], trt.nptype(self.engine.get_binding_dtype(binding)),)
 
     def _allocate_buffers(self):
         """Allocates all host/device in/out buffers required for an engine."""
@@ -116,16 +103,9 @@ class TensorRtDetector(DetectionApi):
         output_idx = 0
         for binding in self.engine:
             binding_dims = self.engine.get_binding_shape(binding)
-            if len(binding_dims) == 4:
-                # explicit batch case (TensorRT 7+)
-                size = trt.volume(binding_dims)
-            elif len(binding_dims) == 3:
-                # implicit batch case (TensorRT 6 or older)
-                size = trt.volume(binding_dims) * self.engine.max_batch_size
-            else:
-                raise ValueError(
-                    "bad dims of binding %s: %s" % (binding, str(binding_dims))
-                )
+            size = trt.volume(binding_dims)
+            if size < 0:
+                size = -size * 20  # size is dynamic, limit to 20x
             nbytes = size * self.engine.get_binding_dtype(binding).itemsize
             # Allocate host and device buffers
             err, host_mem = cuda.cuMemHostAlloc(
@@ -146,16 +126,16 @@ class TensorRtDetector(DetectionApi):
             else:
                 # each grid has 3 anchors, each anchor generates a detection
                 # output of 7 float32 values
-                assert size % 7 == 0, f"output size was {size}"
+                # assert size % 7 == 0, f"output size was {size}"
                 logger.debug(f"Output has Shape {binding_dims}")
                 outputs.append(HostDeviceMem(host_mem, device_mem, nbytes, size))
                 output_idx += 1
         assert len(inputs) == 1, f"inputs len was {len(inputs)}"
-        assert len(outputs) == 1, f"output len was {len(outputs)}"
+        # assert len(outputs) == 1, f"output len was {len(outputs)}"
         return inputs, outputs, bindings
 
     def _do_inference(self):
-        """do_inference (for TensorRT 7.0+)
+        """do_inference (for TensorRT 8.0+)
         This function is generalized for multiple inputs/outputs for full
         dimension networks.
         Inputs and outputs are expected to be lists of HostDeviceMem objects.
@@ -214,12 +194,15 @@ class TensorRtDetector(DetectionApi):
         )
 
         self.conf_th = 0.4  ##TODO: model config parameter
-        self.nms_threshold = 0.4
         err, self.stream = cuda.cuStreamCreate(0)
         self.trt_logger = TrtLogger()
+        self.model_metadata = {}
         self.engine = self._load_engine(detector_config.model.path)
         self.input_shape = self._get_input_shape()
-
+        self.model_type = detector_config.model.model_type
+        
+        assert self.model_type == ModelTypeEnum.ssd
+        
         try:
             self.context = self.engine.create_execution_context()
             (
@@ -248,67 +231,32 @@ class TensorRtDetector(DetectionApi):
         del self.trt_logger
         cuda.cuCtxDestroy(self.cu_ctx)
 
-    def _postprocess_yolo(self, trt_outputs, conf_th):
-        """Postprocess TensorRT outputs.
-        # Args
-            trt_outputs: a list of 2 or 3 tensors, where each tensor
-                        contains a multiple of 7 float32 numbers in
-                        the order of [x, y, w, h, box_confidence, class_id, class_prob]
-            conf_th: confidence threshold
-        # Returns
-            boxes, scores, classes
-        """
-        # filter low-conf detections and concatenate results of all yolo layers
-        detections = []
-        for o in trt_outputs:
-            dets = o.reshape((-1, 7))
-            dets = dets[dets[:, 4] * dets[:, 6] >= conf_th]
-            detections.append(dets)
-        detections = np.concatenate(detections, axis=0)
-
-        return detections
-
     def detect_raw(self, tensor_input):
-        # Input tensor has the shape of the [height, width, 3]
-        # Output tensor of float32 of shape [20, 6] where:
-        # O - class id
-        # 1 - score
-        # 2..5 - a value between 0 and 1 of the box: [top, left, bottom, right]
-
-        # normalize
         if self.input_shape[-1] != trt.int8:
             tensor_input = tensor_input.astype(self.input_shape[-1])
-            tensor_input /= 255.0
 
         self.inputs[0].host = np.ascontiguousarray(
             tensor_input.astype(self.input_shape[-1])
         )
+
         trt_outputs = self._do_inference()
+        count = int(trt_outputs[0][0])
+        class_ids = [int(x) for x in trt_outputs[2]][:count]
+        scores = trt_outputs[1][:count]
+        boxes = np.reshape(trt_outputs[3][:4*count], (count, 4))
 
-        raw_detections = self._postprocess_yolo(trt_outputs, self.conf_th)
+        detections = np.zeros((20, 6), np.float32)
 
-        if len(raw_detections) == 0:
-            return np.zeros((20, 6), np.float32)
-
-        # raw_detections: Nx7 numpy arrays of
-        #             [[x, y, w, h, box_confidence, class_id, class_prob],
-
-        # Calculate score as box_confidence x class_prob
-        raw_detections[:, 4] = raw_detections[:, 4] * raw_detections[:, 6]
-        # Reorder elements by the score, best on top, remove class_prob
-        ordered = raw_detections[raw_detections[:, 4].argsort()[::-1]][:, 0:6]
-        # transform width to right with clamp to 0..1
-        ordered[:, 2] = np.clip(ordered[:, 2] + ordered[:, 0], 0, 1)
-        # transform height to bottom with clamp to 0..1
-        ordered[:, 3] = np.clip(ordered[:, 3] + ordered[:, 1], 0, 1)
-        # put result into the correct order and limit to top 20
-        detections = ordered[:, [5, 4, 1, 0, 3, 2]][:20]
-
-        # pad to 20x6 shape
-        append_cnt = 20 - len(detections)
-        if append_cnt > 0:
-            detections = np.append(
-                detections, np.zeros((append_cnt, 6), np.float32), axis=0
-            )
-
+        for i in range(count):
+            if scores[i] < 0.4 or i == 20:
+                break
+            detections[i] = [
+                class_ids[i],
+                float(scores[i]),
+                boxes[i][0],
+                boxes[i][1],
+                boxes[i][2],
+                boxes[i][3],
+            ]
+            # print(f"raw_detection: {detections[i]}")
         return detections

@@ -13,7 +13,7 @@ COPY docker/tensorrt/requirements-amd64.txt /requirements-tensorrt.txt
 RUN mkdir -p /trt-wheels && pip3 wheel --wheel-dir=/trt-wheels -r /requirements-tensorrt.txt
 
 FROM tensorrt-base AS frigate-tensorrt
-ENV TRT_VER=8.5.3
+ENV TRT_VER=8.6.3
 RUN --mount=type=bind,from=trt-wheels,source=/trt-wheels,target=/deps/trt-wheels \
     pip3 install -U /deps/trt-wheels/*.whl && \
     ldconfig
@@ -28,5 +28,6 @@ COPY --from=trt-deps /usr/local/lib/libyolo_layer.so /usr/local/lib/libyolo_laye
 COPY --from=trt-deps /usr/local/src/tensorrt_demos /usr/local/src/tensorrt_demos
 COPY docker/tensorrt/detector/rootfs/ /
 COPY --from=trt-deps /usr/local/lib/libyolo_layer.so /usr/local/lib/libyolo_layer.so
+
 RUN --mount=type=bind,from=trt-wheels,source=/trt-wheels,target=/deps/trt-wheels \
     pip3 install -U /deps/trt-wheels/*.whl

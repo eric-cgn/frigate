@@ -24,6 +24,10 @@ ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
 COPY --from=trt-deps /usr/local/lib/libyolo_layer.so /usr/local/lib/libyolo_layer.so
 COPY --from=trt-deps /usr/local/src/tensorrt_demos /usr/local/src/tensorrt_demos
+COPY --from=trt-deps /usr/local/lib/python3.10/dist-packages/tensorrt /usr/local/lib/python3.10/tensorrt
+COPY --from=trt-deps /usr/local/lib/python3.10/dist-packages/uff /usr/local/lib/python3.10/uff
+COPY --from=trt-deps /usr/local/lib/python3.10/dist-packages/graphsurgeon /usr/local/lib/python3.10/graphsurgeon
+COPY --from=trt-deps /usr/lib/x86_64-linux-gnu/libnv* /usr/lib/x86_64-linux-gnu/
 COPY docker/tensorrt/detector/rootfs/ /
 ENV YOLO_MODELS="yolov7-320"
 
