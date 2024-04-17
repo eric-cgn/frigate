@@ -688,8 +688,9 @@ def process_frames(
                 )
 
             consolidated_detections = reduce_detections(frame_shape, detections)
-            if len(consolidated_detections) > 0:
-                print(consolidated_detections)
+            if False:  # debug
+            #    if len(consolidated_detections) > 0:
+            #        print(consolidated_detections)
 
             # if detection was run on this frame, consolidate
             if len(regions) > 0:

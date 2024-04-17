@@ -27,8 +27,8 @@ class YoloDetector(DetectionApi):
     type_key = DETECTOR_KEY
 
     def __init__(self, detector_config: YoloDetectorConfig):
-        model_path = detector_config.model.path
-        self.model = YOLO(model_path, task='detect')
+        self.config = detector_config
+        self.model = YOLO(self.config.model.path, task='detect')
 
     def detect_raw(self, tensor_input):
         indata = np.squeeze(np.ascontiguousarray(tensor_input))
@@ -42,7 +42,7 @@ class YoloDetector(DetectionApi):
         count = len(results.cls)
         class_ids = results.cls.int().tolist()
         boxes = [[c/size for c in b] for b in results.xyxy.tolist()]
-        scores = results.conf.tolist()
+        scores = [x**self.config.model.confidence_gamma for x in results.conf.tolist()]
         detections = np.zeros((20, 6), np.float32)
 
         for i in range(count):

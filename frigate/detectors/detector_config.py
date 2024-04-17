@@ -51,6 +51,9 @@ class ModelConfig(BaseModel):
     model_type: ModelTypeEnum = Field(
         default=ModelTypeEnum.ssd, title="Object Detection Model Type"
     )
+    confidence_gamma: float = Field(
+        default=1.0, title="Gamma correction factor for confidence (<1 raise, >1 lower)"
+    )
     _merged_labelmap: Optional[Dict[int, str]] = PrivateAttr()
     _colormap: Dict[int, Tuple[int, int, int]] = PrivateAttr()
     _model_hash: str = PrivateAttr()
