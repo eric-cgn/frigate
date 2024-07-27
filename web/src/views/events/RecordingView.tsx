@@ -15,6 +15,7 @@ import { FrigateConfig } from "@/types/frigateConfig";
 import { Preview } from "@/types/preview";
 import {
   MotionData,
+  REVIEW_PADDING,
   ReviewFilter,
   ReviewSegment,
   ReviewSummary,
@@ -40,6 +41,11 @@ import MobileReviewSettingsDrawer from "@/components/overlay/MobileReviewSetting
 import Logo from "@/components/Logo";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FaVideo } from "react-icons/fa";
+import { VideoResolutionType } from "@/types/live";
+import { ASPECT_VERTICAL_LAYOUT, ASPECT_WIDE_LAYOUT } from "@/types/record";
+import { useResizeObserver } from "@/hooks/resize-observer";
+import { cn } from "@/lib/utils";
+import { useFullscreen } from "@/hooks/use-fullscreen";
 
 const SEGMENT_DURATION = 30;
 
@@ -73,6 +79,9 @@ export function RecordingView({
 
   const [mainCamera, setMainCamera] = useState(startCamera);
   const mainControllerRef = useRef<DynamicVideoController | null>(null);
+  const mainLayoutRef = useRef<HTMLDivElement | null>(null);
+  const cameraLayoutRef = useRef<HTMLDivElement | null>(null);
+  const previewRowRef = useRef<HTMLDivElement | null>(null);
   const previewRefs = useRef<{ [camera: string]: PreviewController }>({});
 
   const [playbackStart, setPlaybackStart] = useState(startTime);
@@ -102,6 +111,24 @@ export function RecordingView({
     () => chunkedTimeRange[selectedRangeIdx],
     [selectedRangeIdx, chunkedTimeRange],
   );
+  const reviewFilterList = useMemo(() => {
+    const uniqueLabels = new Set<string>();
+
+    reviewItems?.forEach((rev) => {
+      rev.data.objects.forEach((obj) =>
+        uniqueLabels.add(obj.replace("-verified", "")),
+      );
+      rev.data.audio.forEach((aud) => uniqueLabels.add(aud));
+    });
+
+    const uniqueZones = new Set<string>();
+
+    reviewItems?.forEach((rev) => {
+      rev.data.zones.forEach((zone) => uniqueZones.add(zone));
+    });
+
+    return { labels: [...uniqueLabels], zones: [...uniqueZones] };
+  }, [reviewItems]);
 
   // export
 
@@ -169,6 +196,19 @@ export function RecordingView({
     updateSelectedSegment,
   ]);
 
+  const manuallySetCurrentTime = useCallback(
+    (time: number) => {
+      setCurrentTime(time);
+
+      if (currentTimeRange.after <= time && currentTimeRange.before >= time) {
+        mainControllerRef.current?.seekToTimestamp(time, true);
+      } else {
+        updateSelectedSegment(time, true);
+      }
+    },
+    [currentTimeRange, updateSelectedSegment],
+  );
+
   useEffect(() => {
     if (!scrubbing) {
       if (Math.abs(currentTime - playerTime) > 10) {
@@ -188,20 +228,37 @@ export function RecordingView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, scrubbing]);
 
+  const [fullResolution, setFullResolution] = useState<VideoResolutionType>({
+    width: 0,
+    height: 0,
+  });
+
   const onSelectCamera = useCallback(
     (newCam: string) => {
       setMainCamera(newCam);
+      setFullResolution({
+        width: 0,
+        height: 0,
+      });
       setPlaybackStart(currentTime);
     },
     [currentTime],
   );
 
-  // motion timeline data
+  // fullscreen
+
+  const { fullscreen, toggleFullscreen } = useFullscreen(mainLayoutRef);
+
+  // layout
 
   const getCameraAspect = useCallback(
     (cam: string) => {
       if (!config) {
         return undefined;
+      }
+
+      if (cam == mainCamera && fullResolution.width && fullResolution.height) {
+        return fullResolution.width / fullResolution.height;
       }
 
       const camera = config.cameras[cam];
@@ -212,7 +269,7 @@ export function RecordingView({
 
       return camera.detect.width / camera.detect.height;
     },
-    [config],
+    [config, fullResolution, mainCamera],
   );
 
   const mainCameraAspect = useMemo(() => {
@@ -220,9 +277,9 @@ export function RecordingView({
 
     if (!aspectRatio) {
       return "normal";
-    } else if (aspectRatio > 2) {
+    } else if (aspectRatio > ASPECT_WIDE_LAYOUT) {
       return "wide";
-    } else if (aspectRatio < 16 / 9) {
+    } else if (aspectRatio < ASPECT_VERTICAL_LAYOUT) {
       return "tall";
     } else {
       return "normal";
@@ -243,20 +300,74 @@ export function RecordingView({
     }
   }, [mainCameraAspect]);
 
+  const [{ width: mainWidth, height: mainHeight }] =
+    useResizeObserver(cameraLayoutRef);
+
+  const mainCameraStyle = useMemo(() => {
+    if (isMobile || mainCameraAspect != "normal" || !config) {
+      return undefined;
+    }
+
+    const camera = config.cameras[mainCamera];
+
+    if (!camera) {
+      return undefined;
+    }
+
+    const aspect = getCameraAspect(mainCamera);
+
+    if (!aspect) {
+      return undefined;
+    }
+
+    const availableHeight = mainHeight - 112;
+
+    let percent;
+    if (mainWidth / availableHeight < aspect) {
+      percent = 100;
+    } else {
+      const availableWidth = aspect * availableHeight;
+      percent =
+        (mainWidth < availableWidth
+          ? mainWidth / availableWidth
+          : availableWidth / mainWidth) * 100;
+    }
+
+    return {
+      width: `${Math.round(percent)}%`,
+    };
+  }, [
+    config,
+    mainCameraAspect,
+    mainWidth,
+    mainHeight,
+    mainCamera,
+    getCameraAspect,
+  ]);
+
+  const previewRowOverflows = useMemo(() => {
+    if (!previewRowRef.current) {
+      return false;
+    }
+
+    return (
+      previewRowRef.current.scrollWidth > previewRowRef.current.clientWidth ||
+      previewRowRef.current.scrollHeight > previewRowRef.current.clientHeight
+    );
+    // we only want to update when the scroll size changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewRowRef.current?.scrollWidth, previewRowRef.current?.scrollHeight]);
+
   return (
-    <div ref={contentRef} className="size-full pt-2 flex flex-col">
-      <Toaster />
-      <div
-        className={`w-full h-11 mb-2 px-2 relative flex items-center justify-between`}
-      >
+    <div ref={contentRef} className="flex size-full flex-col pt-2">
+      <Toaster closeButton={true} />
+      <div className="relative mb-2 flex h-11 w-full items-center justify-between px-2">
         {isMobile && (
-          <Logo className="absolute inset-x-1/2 -translate-x-1/2 h-8" />
+          <Logo className="absolute inset-x-1/2 h-8 -translate-x-1/2" />
         )}
-        <div
-          className={`flex items-center gap-2 ${isMobile ? "landscape:flex-col" : ""}`}
-        >
+        <div className={cn("flex items-center gap-2")}>
           <Button
-            className={`flex items-center gap-2.5 rounded-lg`}
+            className="flex items-center gap-2.5 rounded-lg"
             size="sm"
             onClick={() => navigate(-1)}
           >
@@ -305,14 +416,17 @@ export function RecordingView({
               filters={["date", "general"]}
               reviewSummary={reviewSummary}
               filter={filter}
-              onUpdateFilter={updateFilter}
               motionOnly={false}
+              filterList={reviewFilterList}
+              showReviewed
+              setShowReviewed={() => {}}
+              onUpdateFilter={updateFilter}
               setMotionOnly={() => {}}
             />
           )}
           {isDesktop ? (
             <ToggleGroup
-              className="*:px-3 *:py-4 *:rounded-md"
+              className="*:rounded-md *:px-3 *:py-4"
               type="single"
               size="sm"
               value={timelineType}
@@ -321,14 +435,14 @@ export function RecordingView({
               } // don't allow the severity to be unselected
             >
               <ToggleGroupItem
-                className={`${timelineType == "timeline" ? "" : "text-gray-500"}`}
+                className={`${timelineType == "timeline" ? "" : "text-muted-foreground"}`}
                 value="timeline"
                 aria-label="Select timeline"
               >
                 <div className="">Timeline</div>
               </ToggleGroupItem>
               <ToggleGroupItem
-                className={`${timelineType == "events" ? "" : "text-gray-500"}`}
+                className={`${timelineType == "events" ? "" : "text-muted-foreground"}`}
                 value="events"
                 aria-label="Select events"
               >
@@ -348,6 +462,8 @@ export function RecordingView({
             latestTime={timeRange.before}
             mode={exportMode}
             range={exportRange}
+            allLabels={reviewFilterList.labels}
+            allZones={reviewFilterList.zones}
             onUpdateFilter={updateFilter}
             setRange={setExportRange}
             setMode={setExportMode}
@@ -356,20 +472,46 @@ export function RecordingView({
       </div>
 
       <div
-        className={`h-full flex justify-center overflow-hidden ${isDesktop ? "" : "flex-col landscape:flex-row gap-2"}`}
+        ref={mainLayoutRef}
+        className={cn(
+          "flex h-full justify-center overflow-hidden",
+          isDesktop ? "" : "flex-col gap-2 landscape:flex-row",
+        )}
       >
-        <div className={`${isDesktop ? "w-[80%]" : ""} flex flex-1 flex-wrap`}>
+        <div
+          ref={cameraLayoutRef}
+          className={cn("flex flex-1 flex-wrap", isDesktop ? "w-[80%]" : "")}
+        >
           <div
-            className={`size-full flex items-center ${mainCameraAspect == "tall" ? "flex-row justify-evenly" : "flex-col justify-center gap-2"}`}
+            className={cn(
+              "flex size-full items-center",
+              mainCameraAspect == "tall"
+                ? "flex-row justify-evenly"
+                : "flex-col justify-center gap-2",
+            )}
           >
             <div
               key={mainCamera}
-              className={`relative ${
+              className={cn(
+                "relative",
                 isDesktop
-                  ? `${mainCameraAspect == "tall" ? "h-[50%] md:h-[60%] lg:h-[75%] xl:h-[90%]" : mainCameraAspect == "wide" ? "w-full" : "w-[78%]"} px-4 flex justify-center`
-                  : `portrait:w-full pt-2 ${mainCameraAspect == "wide" ? "landscape:w-full aspect-wide" : "landscape:h-[94%] aspect-video"}`
-              }`}
+                  ? cn(
+                      "flex justify-center px-4",
+                      mainCameraAspect == "tall"
+                        ? "h-[50%] md:h-[60%] lg:h-[75%] xl:h-[90%]"
+                        : mainCameraAspect == "wide"
+                          ? "w-full"
+                          : "",
+                    )
+                  : cn(
+                      "pt-2 portrait:w-full",
+                      mainCameraAspect == "wide"
+                        ? "aspect-wide landscape:w-full"
+                        : "aspect-video landscape:h-[94%]",
+                    ),
+              )}
               style={{
+                width: mainCameraStyle ? mainCameraStyle.width : undefined,
                 aspectRatio: isDesktop
                   ? mainCameraAspect == "tall"
                     ? getCameraAspect(mainCamera)
@@ -384,6 +526,7 @@ export function RecordingView({
                 cameraPreviews={allPreviews ?? []}
                 startTimestamp={playbackStart}
                 hotKeys={exportMode != "select"}
+                fullscreen={fullscreen}
                 onTimestampUpdate={(timestamp) => {
                   setPlayerTime(timestamp);
                   setCurrentTime(timestamp);
@@ -396,14 +539,25 @@ export function RecordingView({
                   mainControllerRef.current = controller;
                 }}
                 isScrubbing={scrubbing || exportMode == "timeline"}
+                setFullResolution={setFullResolution}
+                toggleFullscreen={toggleFullscreen}
+                containerRef={mainLayoutRef}
               />
             </div>
             {isDesktop && (
               <div
-                className={`flex gap-2 ${mainCameraAspect == "tall" ? "h-full w-[12%] flex-col justify-center overflow-y-auto" : "w-full h-[14%] justify-center items-center overflow-x-auto"} `}
+                ref={previewRowRef}
+                className={cn(
+                  "scrollbar-container flex gap-2 overflow-auto",
+                  mainCameraAspect == "tall"
+                    ? "h-full w-72 flex-col"
+                    : `h-28 w-full`,
+                  previewRowOverflows ? "" : "items-center justify-center",
+                )}
               >
+                <div className="w-2" />
                 {allCameras.map((cam) => {
-                  if (cam == mainCamera) {
+                  if (cam == mainCamera || cam == "birdseye") {
                     return;
                   }
 
@@ -411,7 +565,7 @@ export function RecordingView({
                     <div
                       key={cam}
                       className={
-                        mainCameraAspect == "tall" ? undefined : "h-full"
+                        mainCameraAspect == "tall" ? "w-full" : "h-full"
                       }
                       style={{
                         aspectRatio: getCameraAspect(cam),
@@ -433,6 +587,7 @@ export function RecordingView({
                     </div>
                   );
                 })}
+                <div className="w-2" />
               </div>
             )}
           </div>
@@ -448,6 +603,7 @@ export function RecordingView({
           currentTime={currentTime}
           exportRange={exportMode == "timeline" ? exportRange : undefined}
           setCurrentTime={setCurrentTime}
+          manuallySetCurrentTime={manuallySetCurrentTime}
           setScrubbing={setScrubbing}
           setExportRange={setExportRange}
         />
@@ -465,6 +621,7 @@ type TimelineProps = {
   currentTime: number;
   exportRange?: TimeRange;
   setCurrentTime: React.Dispatch<React.SetStateAction<number>>;
+  manuallySetCurrentTime: (time: number, force: boolean) => void;
   setScrubbing: React.Dispatch<React.SetStateAction<boolean>>;
   setExportRange: (range: TimeRange) => void;
 };
@@ -477,6 +634,7 @@ function Timeline({
   currentTime,
   exportRange,
   setCurrentTime,
+  manuallySetCurrentTime,
   setScrubbing,
   setExportRange,
 }: TimelineProps) {
@@ -511,12 +669,12 @@ function Timeline({
     <div
       className={`${
         isDesktop
-          ? `${timelineType == "timeline" ? "w-[100px]" : "w-60"} overflow-y-auto no-scrollbar`
-          : "portrait:flex-grow landscape:w-[20%] overflow-hidden"
+          ? `${timelineType == "timeline" ? "w-[100px]" : "w-60"} no-scrollbar overflow-y-auto`
+          : "overflow-hidden portrait:flex-grow landscape:w-[20%]"
       } relative`}
     >
-      <div className="absolute top-0 inset-x-0 z-20 w-full h-[30px] bg-gradient-to-b from-secondary to-transparent pointer-events-none"></div>
-      <div className="absolute bottom-0 inset-x-0 z-20 w-full h-[30px] bg-gradient-to-t from-secondary to-transparent pointer-events-none"></div>
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-[30px] w-full bg-gradient-to-b from-secondary to-transparent"></div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[30px] w-full bg-gradient-to-t from-secondary to-transparent"></div>
       {timelineType == "timeline" ? (
         motionData ? (
           <MotionReviewTimeline
@@ -543,27 +701,33 @@ function Timeline({
           <Skeleton className="size-full" />
         )
       ) : (
-        <div
-          className={`h-full grid grid-cols-1 gap-4 overflow-auto p-4 bg-secondary ${isDesktop ? "" : "sm:grid-cols-2"}`}
-        >
-          {mainCameraReviewItems.map((review) => {
-            if (review.severity == "significant_motion") {
-              return;
-            }
+        <div className="scrollbar-container h-full overflow-auto bg-secondary">
+          <div
+            className={cn(
+              "scrollbar-container grid h-auto grid-cols-1 gap-4 overflow-auto p-4",
+              isMobile && "sm:grid-cols-2",
+            )}
+          >
+            {mainCameraReviewItems.map((review) => {
+              if (review.severity == "significant_motion") {
+                return;
+              }
 
-            return (
-              <ReviewCard
-                key={review.id}
-                event={review}
-                currentTime={currentTime}
-                onClick={() => {
-                  setScrubbing(true);
-                  setCurrentTime(review.start_time);
-                  setScrubbing(false);
-                }}
-              />
-            );
-          })}
+              return (
+                <ReviewCard
+                  key={review.id}
+                  event={review}
+                  currentTime={currentTime}
+                  onClick={() => {
+                    manuallySetCurrentTime(
+                      review.start_time - REVIEW_PADDING,
+                      true,
+                    );
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

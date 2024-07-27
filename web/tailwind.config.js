@@ -53,6 +53,7 @@ module.exports = {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          variant: "hsl(var(--primary-variant))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -102,6 +103,12 @@ module.exports = {
         audio_review: {
           DEFAULT: "hsl(var(--audio_review))",
         },
+        neutral: {
+          DEFAULT: "hsl(var(--neutral))",
+        },
+        neutral_variant: {
+          DEFAULT: "hsl(var(--neutral_variant))",
+        },
       },
       keyframes: {
         "accordion-down": {
@@ -138,9 +145,14 @@ module.exports = {
         xs: "480px",
         "2xl": "1440px",
         "3xl": "1920px",
-        "4xl": "2560px",
+        "2k": "2560px",
+        "4k": "3180px",
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [
+    require("tailwindcss-animate"),
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require("tailwind-scrollbar")({ nocompatible: true }),
+  ],
 };

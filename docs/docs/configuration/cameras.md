@@ -84,13 +84,33 @@ This list of working and non-working PTZ cameras is based on user feedback.
 | Ctronics PTZ             |      ✅      |      ❌      |                                                                                                                                                 |
 | Dahua                    |      ✅      |      ✅      |                                                                                                                                                 |
 | Foscam R5                |      ✅      |      ❌      |                                                                                                                                                 |
+| Hanwha XNP-6550RH        |      ✅      |      ❌      |                                                                                                                                                 |
 | Hikvision                |      ✅      |      ❌      | Incomplete ONVIF support (MoveStatus won't update even on latest firmware) - reported with HWP-N4215IH-DE and DS-2DE3304W-DE, but likely others |
 | Reolink 511WA            |      ✅      |      ❌      | Zoom only                                                                                                                                       |
 | Reolink E1 Pro           |      ✅      |      ❌      |                                                                                                                                                 |
 | Reolink E1 Zoom          |      ✅      |      ❌      |                                                                                                                                                 |
 | Reolink RLC-823A 16x     |      ✅      |      ❌      |                                                                                                                                                 |
 | Sunba 405-D20X           |      ✅      |      ❌      |                                                                                                                                                 |
-| Tapo C200                |      ✅      |      ❌      | Incomplete ONVIF support                                                                                                                        |
-| Tapo C210                |      ❌      |      ❌      | Incomplete ONVIF support                                                                                                                        |
+| Tapo                     |      ✅      |      ❌      | Many models supported, ONVIF Service Port: 2020                                                                                                 |
 | Uniview IPC672LR-AX4DUPK |      ✅      |      ❌      | Firmware says FOV relative movement is supported, but camera doesn't actually move when sending ONVIF commands                                  |
 | Vikylin PTZ-2804X-I2     |      ❌      |      ❌      | Incomplete ONVIF support                                                                                                                        |
+
+## Setting up camera groups
+
+:::tip
+
+It is recommended to set up camera groups using the UI.
+
+:::
+
+Cameras can be grouped together and assigned a name and icon, this allows them to be reviewed and filtered together. There will always be the default group for all cameras.
+
+```yaml
+camera_groups:
+  front:
+    cameras:
+      - driveway_cam
+      - garage_cam
+    icon: car
+    order: 0
+```

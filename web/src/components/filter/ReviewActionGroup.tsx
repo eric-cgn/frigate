@@ -35,12 +35,12 @@ export default function ReviewActionGroup({
   }, [selectedReviews, setSelectedReviews, pullLatestData]);
 
   return (
-    <div className="absolute inset-x-2 inset-y-0 md:left-auto py-2 flex gap-2 justify-between items-center bg-background">
-      <div className="mx-1 flex justify-center items-center text-sm text-muted-foreground">
+    <div className="absolute inset-x-2 inset-y-0 flex items-center justify-between gap-2 bg-background py-2 md:left-auto">
+      <div className="mx-1 flex items-center justify-center text-sm text-muted-foreground">
         <div className="p-1">{`${selectedReviews.length} selected`}</div>
         <div className="p-1">{"|"}</div>
         <div
-          className="p-2 text-primary cursor-pointer hover:bg-secondary hover:rounded-lg"
+          className="cursor-pointer p-2 text-primary hover:rounded-lg hover:bg-secondary"
           onClick={onClearSelected}
         >
           Unselect
@@ -49,31 +49,31 @@ export default function ReviewActionGroup({
       <div className="flex items-center gap-1 md:gap-2">
         {selectedReviews.length == 1 && (
           <Button
-            className="p-2 flex items-center gap-2"
+            className="flex items-center gap-2 p-2"
             size="sm"
             onClick={() => {
               onExport(selectedReviews[0]);
               onClearSelected();
             }}
           >
-            <FaCompactDisc />
+            <FaCompactDisc className="text-secondary-foreground" />
             {isDesktop && <div className="text-primary">Export</div>}
           </Button>
         )}
         <Button
-          className="p-2 flex items-center gap-2"
+          className="flex items-center gap-2 p-2"
           size="sm"
           onClick={onMarkAsReviewed}
         >
-          <FaCircleCheck />
+          <FaCircleCheck className="text-secondary-foreground" />
           {isDesktop && <div className="text-primary">Mark as reviewed</div>}
         </Button>
         <Button
-          className="p-2 flex items-center gap-1"
+          className="flex items-center gap-2 p-2"
           size="sm"
           onClick={onDelete}
         >
-          <HiTrash />
+          <HiTrash className="text-secondary-foreground" />
           {isDesktop && <div className="text-primary">Delete</div>}
         </Button>
       </div>

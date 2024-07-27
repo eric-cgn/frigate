@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
-import { get as getData, set as setData } from "idb-keyval";
+import { get as getData, set as setData, del as delData } from "idb-keyval";
 
 type usePersistenceReturn<S> = [
   value: S | undefined,
   setValue: (value: S | undefined) => void,
   loaded: boolean,
+  deleteValue: () => void,
 ];
 
 export function usePersistence<S>(
@@ -26,9 +27,13 @@ export function usePersistence<S>(
     [key],
   );
 
+  const deleteValue = useCallback(async () => {
+    await delData(key);
+    setInternalValue(defaultValue);
+  }, [key, defaultValue]);
+
   useEffect(() => {
     setLoaded(false);
-    setInternalValue(defaultValue);
 
     async function load() {
       const value = await getData(key);
@@ -41,5 +46,5 @@ export function usePersistence<S>(
     load();
   }, [key, defaultValue, setValue]);
 
-  return [value, setValue, loaded];
+  return [value, setValue, loaded, deleteValue];
 }

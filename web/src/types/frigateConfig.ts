@@ -1,4 +1,4 @@
-import { LivePlayerMode } from "./live";
+import { IconName } from "@/components/icons/IconPicker";
 
 export interface UiConfig {
   timezone?: string;
@@ -6,8 +6,6 @@ export interface UiConfig {
   date_style?: "full" | "long" | "medium" | "short";
   time_style?: "full" | "long" | "medium" | "short";
   strftime_fmt?: string;
-  live_mode?: LivePlayerMode;
-  use_experimental?: boolean;
   dashboard: boolean;
   order: number;
 }
@@ -20,6 +18,14 @@ export interface BirdseyeConfig {
   restream: boolean;
   width: number;
 }
+
+export const ATTRIBUTE_LABELS = [
+  "amazon",
+  "face",
+  "fedex",
+  "license_plate",
+  "ups",
+];
 
 export interface CameraConfig {
   audio: {
@@ -106,7 +112,7 @@ export interface CameraConfig {
   objects: {
     filters: {
       [objectName: string]: {
-        mask: string | null;
+        mask: string[] | null;
         max_area: number;
         max_ratio: number;
         min_area: number;
@@ -163,6 +169,16 @@ export interface CameraConfig {
     };
     sync_recordings: boolean;
   };
+  review: {
+    alerts: {
+      required_zones: string[];
+      labels: string[];
+    };
+    detections: {
+      required_zones: string[];
+      labels: string[];
+    };
+  };
   rtmp: {
     enabled: boolean;
   };
@@ -199,16 +215,16 @@ export interface CameraConfig {
       coordinates: string;
       filters: Record<string, unknown>;
       inertia: number;
+      loitering_time: number;
       objects: string[];
+      color: number[];
     };
   };
 }
 
-export const GROUP_ICONS = ["car", "cat", "dog", "leaf"] as const;
-
 export type CameraGroupConfig = {
   cameras: string[];
-  icon: (typeof GROUP_ICONS)[number];
+  icon: IconName;
   order: number;
 };
 
@@ -306,6 +322,7 @@ export interface FrigateConfig {
     model_type: string;
     path: string | null;
     width: number;
+    colormap: { [key: string]: [number, number, number] };
   };
 
   motion: Record<string, unknown> | null;
@@ -327,7 +344,7 @@ export interface FrigateConfig {
   objects: {
     filters: {
       [objectName: string]: {
-        mask: string | null;
+        mask: string[] | null;
         max_area: number;
         max_ratio: number;
         min_area: number;
@@ -336,7 +353,7 @@ export interface FrigateConfig {
         threshold: number;
       };
     };
-    mask: string;
+    mask: string[];
     track: string[];
   };
 

@@ -26,9 +26,8 @@ class DetectionProxyRunner(threading.Thread):
 
     def run(self) -> None:
         """Run the proxy."""
-        control = self.context.socket(zmq.SUB)
+        control = self.context.socket(zmq.REP)
         control.connect(SOCKET_CONTROL)
-        control.setsockopt_string(zmq.SUBSCRIBE, "")
         incoming = self.context.socket(zmq.XSUB)
         incoming.bind(SOCKET_PUB)
         outgoing = self.context.socket(zmq.XPUB)
@@ -46,13 +45,13 @@ class DetectionProxy:
 
     def __init__(self) -> None:
         self.context = zmq.Context()
-        self.control = self.context.socket(zmq.PUB)
+        self.control = self.context.socket(zmq.REQ)
         self.control.bind(SOCKET_CONTROL)
         self.runner = DetectionProxyRunner(self.context)
         self.runner.start()
 
     def stop(self) -> None:
-        self.control.send_string("TERMINATE")  # tell the proxy to stop
+        self.control.send("TERMINATE".encode())  # tell the proxy to stop
         self.runner.join()
         self.context.destroy()
 
@@ -69,7 +68,7 @@ class DetectionPublisher:
     def send_data(self, payload: any) -> None:
         """Publish detection."""
         self.socket.send_string(self.topic.value, flags=zmq.SNDMORE)
-        self.socket.send_pyobj(payload)
+        self.socket.send_json(payload)
 
     def stop(self) -> None:
         self.socket.close()
@@ -92,7 +91,7 @@ class DetectionSubscriber:
 
             if has_update:
                 topic = DetectionTypeEnum[self.socket.recv_string(flags=zmq.NOBLOCK)]
-                return (topic, self.socket.recv_pyobj())
+                return (topic, self.socket.recv_json())
         except zmq.ZMQError:
             pass
 

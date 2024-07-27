@@ -23,6 +23,10 @@ import useContextMenu from "@/hooks/use-contextmenu";
 import ActivityIndicator from "../indicators/activity-indicator";
 import { TimeRange } from "@/types/timeline";
 import { NoThumbSlider } from "../ui/slider";
+import { PREVIEW_FPS, PREVIEW_PADDING } from "@/types/preview";
+import { capitalizeFirstLetter } from "@/utils/stringUtil";
+import { baseUrl } from "@/api/baseUrl";
+import { cn } from "@/lib/utils";
 
 type PreviewPlayerProps = {
   review: ReviewSegment;
@@ -67,18 +71,21 @@ export default function PreviewThumbnailPlayer({
     [ignoreClick, review, onClick],
   );
 
-  const swipeHandlers = useSwipeable({
-    onSwipedLeft: () => (setReviewed ? setReviewed(review) : null),
-    onSwipedRight: () => setPlayback(true),
-    preventScrollOnSwipe: true,
-  });
-
   const handleSetReviewed = useCallback(() => {
     if (review.end_time && !review.has_been_reviewed) {
       review.has_been_reviewed = true;
       setReviewed(review);
     }
   }, [review, setReviewed]);
+
+  const swipeHandlers = useSwipeable({
+    onSwipedLeft: () => {
+      setPlayback(false);
+      handleSetReviewed();
+    },
+    onSwipedRight: () => setPlayback(true),
+    preventScrollOnSwipe: true,
+  });
 
   useContextMenu(imgRef, () => {
     onClick(review, true);
@@ -205,7 +212,7 @@ export default function PreviewThumbnailPlayer({
       <div className={`${imgLoaded ? "visible" : "invisible"}`}>
         <img
           ref={imgRef}
-          className={`size-full transition-opacity select-none ${
+          className={`size-full select-none transition-opacity ${
             playingBack ? "opacity-0" : "opacity-100"
           }`}
           style={
@@ -223,8 +230,15 @@ export default function PreviewThumbnailPlayer({
             onImgLoad();
           }}
         />
-
-        <div className="absolute left-0 top-2 z-40">
+        {!playingBack && (
+          <div
+            className={cn(
+              "rounded-t-l pointer-events-none absolute inset-x-0 top-0 h-[30%] w-full bg-gradient-to-b from-black/60 to-transparent",
+              !isIOS && "z-10",
+            )}
+          />
+        )}
+        <div className={cn("absolute left-0 top-2", !isIOS && "z-40")}>
           <Tooltip>
             <div
               className="flex"
@@ -232,14 +246,14 @@ export default function PreviewThumbnailPlayer({
               onMouseLeave={() => setTooltipHovering(false)}
             >
               <TooltipTrigger asChild>
-                <div className="mx-3 pb-1 text-white text-sm">
+                <div className="mx-3 pb-1 text-sm text-white">
                   {(review.severity == "alert" ||
                     review.severity == "detection") && (
                     <>
                       <Chip
-                        className={`flex items-start justify-between space-x-1 ${playingBack ? "hidden" : ""} bg-gradient-to-br ${review.has_been_reviewed ? "from-green-600 to-green-700 bg-green-600" : "from-gray-400 to-gray-500 bg-gray-500"} z-0`}
+                        className={`flex items-start justify-between space-x-1 ${playingBack ? "hidden" : ""} bg-gradient-to-br ${review.has_been_reviewed ? "bg-green-600 from-green-600 to-green-700" : "bg-gray-500 from-gray-400 to-gray-500"} z-0`}
                       >
-                        {review.data.objects.map((object) => {
+                        {review.data.objects.sort().map((object) => {
                           return getIconForLabel(object, "size-3 text-white");
                         })}
                         {review.data.audio.map((audio) => {
@@ -252,29 +266,41 @@ export default function PreviewThumbnailPlayer({
               </TooltipTrigger>
             </div>
             <TooltipContent className="capitalize">
-              {[...(review.data.objects || []), ...(review.data.audio || [])]
-                .filter((item) => item !== undefined)
+              {[
+                ...new Set([
+                  ...(review.data.objects || []),
+                  ...(review.data.sub_labels || []),
+                  ...(review.data.audio || []),
+                ]),
+              ]
+                .filter(
+                  (item) => item !== undefined && !item.includes("-verified"),
+                )
+                .map((text) => capitalizeFirstLetter(text))
+                .sort()
                 .join(", ")
                 .replaceAll("-verified", "")}
             </TooltipContent>
           </Tooltip>
         </div>
         {!playingBack && (
-          <>
-            <div className="absolute top-0 inset-x-0 rounded-t-l z-10 w-full h-[30%] bg-gradient-to-b from-black/60 to-transparent pointer-events-none"></div>
-            <div className="absolute bottom-0 inset-x-0 rounded-b-l z-10 w-full h-[20%] bg-gradient-to-t from-black/60 to-transparent pointer-events-none">
-              <div className="flex h-full justify-between items-end mx-3 pb-1 text-white text-sm">
-                {review.end_time ? (
-                  <TimeAgo time={review.start_time * 1000} dense />
-                ) : (
-                  <div>
-                    <ActivityIndicator size={24} />
-                  </div>
-                )}
-                {formattedDate}
-              </div>
+          <div
+            className={cn(
+              "rounded-b-l pointer-events-none absolute inset-x-0 bottom-0 h-[20%] w-full bg-gradient-to-t from-black/60 to-transparent",
+              !isIOS && "z-10",
+            )}
+          >
+            <div className="mx-3 flex h-full items-end justify-between pb-1 text-sm text-white">
+              {review.end_time ? (
+                <TimeAgo time={review.start_time * 1000} dense />
+              ) : (
+                <div>
+                  <ActivityIndicator size={24} />
+                </div>
+              )}
+              {formattedDate}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -311,6 +337,7 @@ function PreviewContent({
         setIgnoreClick={setIgnoreClick}
         isPlayingBack={isPlayingBack}
         onTimeUpdate={onTimeUpdate}
+        windowVisible={true}
       />
     );
   } else if (isCurrentHour(review.start_time)) {
@@ -322,29 +349,35 @@ function PreviewContent({
         setIgnoreClick={setIgnoreClick}
         isPlayingBack={isPlayingBack}
         onTimeUpdate={onTimeUpdate}
+        windowVisible={true}
       />
     );
   }
 }
 
-const PREVIEW_PADDING = 16;
 type VideoPreviewProps = {
   relevantPreview: Preview;
   startTime: number;
   endTime?: number;
+  showProgress?: boolean;
+  loop?: boolean;
   setReviewed: () => void;
   setIgnoreClick: (ignore: boolean) => void;
   isPlayingBack: (ended: boolean) => void;
   onTimeUpdate?: (time: number | undefined) => void;
+  windowVisible: boolean;
 };
-function VideoPreview({
+export function VideoPreview({
   relevantPreview,
   startTime,
   endTime,
+  showProgress = true,
+  loop = false,
   setReviewed,
   setIgnoreClick,
   isPlayingBack,
   onTimeUpdate,
+  windowVisible,
 }: VideoPreviewProps) {
   const playerRef = useRef<HTMLVideoElement | null>(null);
   const sliderRef = useRef<HTMLDivElement | null>(null);
@@ -384,7 +417,7 @@ function VideoPreview({
       setManualPlayback(true);
     } else {
       playerRef.current.currentTime = playerStartTime;
-      playerRef.current.playbackRate = 8;
+      playerRef.current.playbackRate = PREVIEW_FPS;
     }
 
     // we know that these deps are correct
@@ -394,6 +427,10 @@ function VideoPreview({
   // time progress update
 
   const onProgress = useCallback(() => {
+    if (!windowVisible) {
+      return;
+    }
+
     if (onTimeUpdate) {
       onTimeUpdate(
         relevantPreview.start + (playerRef.current?.currentTime || 0),
@@ -415,6 +452,16 @@ function VideoPreview({
     if (playerPercent > 100) {
       setReviewed();
 
+      if (loop && playerRef.current) {
+        if (manualPlayback) {
+          setManualPlayback(false);
+          setTimeout(() => setManualPlayback(true), 100);
+        }
+
+        playerRef.current.currentTime = playerStartTime;
+        return;
+      }
+
       if (isMobile) {
         isPlayingBack(false);
 
@@ -433,7 +480,7 @@ function VideoPreview({
 
     // we know that these deps are correct
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setProgress, lastPercent]);
+  }, [setProgress, lastPercent, windowVisible]);
 
   // manual playback
   // safari is incapable of playing at a speed > 2x
@@ -451,7 +498,7 @@ function VideoPreview({
         playerRef.current.currentTime = playerStartTime + counter;
         counter += 1;
       }
-    }, 125);
+    }, 1000 / PREVIEW_FPS);
     return () => clearInterval(intervalId);
 
     // we know that these deps are correct
@@ -501,6 +548,7 @@ function VideoPreview({
   const onStopManualSeek = useCallback(() => {
     setTimeout(() => {
       setIgnoreClick(false);
+      setHoverTimeout(undefined);
 
       if (isSafari || (isFirefox && isMobile)) {
         setManualPlayback(true);
@@ -531,29 +579,34 @@ function VideoPreview({
   );
 
   return (
-    <div className="relative size-full aspect-video bg-black">
+    <div className="relative aspect-video size-full bg-black">
       <video
         ref={playerRef}
-        className="size-full aspect-video bg-black pointer-events-none"
+        className="pointer-events-none aspect-video size-full bg-black"
         autoPlay
         playsInline
         preload="auto"
         muted
         onTimeUpdate={onProgress}
       >
-        <source src={relevantPreview.src} type={relevantPreview.type} />
+        <source
+          src={`${baseUrl}${relevantPreview.src.substring(1)}`}
+          type={relevantPreview.type}
+        />
       </video>
-      <NoThumbSlider
-        ref={sliderRef}
-        className="absolute inset-x-0 bottom-0 z-30"
-        value={[progress]}
-        onValueChange={onManualSeek}
-        onValueCommit={onStopManualSeek}
-        min={0}
-        step={1}
-        max={100}
-        onMouseMove={isMobile ? undefined : onProgressHover}
-      />
+      {showProgress && (
+        <NoThumbSlider
+          ref={sliderRef}
+          className={`absolute inset-x-0 bottom-0 z-30 cursor-col-resize ${hoverTimeout != undefined ? "h-4" : "h-2"}`}
+          value={[progress]}
+          onValueChange={onManualSeek}
+          onValueCommit={onStopManualSeek}
+          min={0}
+          step={1}
+          max={100}
+          onMouseMove={isMobile ? undefined : onProgressHover}
+        />
+      )}
     </div>
   );
 }
@@ -562,18 +615,24 @@ const MIN_LOAD_TIMEOUT_MS = 200;
 type InProgressPreviewProps = {
   review: ReviewSegment;
   timeRange: TimeRange;
+  showProgress?: boolean;
+  loop?: boolean;
   setReviewed: (reviewId: string) => void;
   setIgnoreClick: (ignore: boolean) => void;
   isPlayingBack: (ended: boolean) => void;
   onTimeUpdate?: (time: number | undefined) => void;
+  windowVisible: boolean;
 };
-function InProgressPreview({
+export function InProgressPreview({
   review,
   timeRange,
+  showProgress = true,
+  loop = false,
   setReviewed,
   setIgnoreClick,
   isPlayingBack,
   onTimeUpdate,
+  windowVisible,
 }: InProgressPreviewProps) {
   const apiHost = useApiHost();
   const sliderRef = useRef<HTMLDivElement | null>(null);
@@ -588,7 +647,7 @@ function InProgressPreview({
   const [key, setKey] = useState(0);
 
   const handleLoad = useCallback(() => {
-    if (!previewFrames) {
+    if (!previewFrames || !windowVisible) {
       return;
     }
 
@@ -603,6 +662,11 @@ function InProgressPreview({
     if (key == previewFrames.length - 1) {
       if (!review.has_been_reviewed) {
         setReviewed(review.id);
+      }
+
+      if (loop) {
+        setKey(0);
+        return;
       }
 
       if (isMobile) {
@@ -621,7 +685,9 @@ function InProgressPreview({
         setReviewed(review.id);
       }
 
-      setKey(key + 1);
+      if (previewFrames[key + 1]) {
+        setKey(key + 1);
+      }
     }, MIN_LOAD_TIMEOUT_MS);
 
     // we know that these deps are correct
@@ -701,23 +767,25 @@ function InProgressPreview({
   }
 
   return (
-    <div className="relative size-full flex items-center bg-black">
+    <div className="relative flex size-full items-center bg-black">
       <img
-        className="size-full object-contain pointer-events-none"
+        className="pointer-events-none size-full object-contain"
         src={`${apiHost}api/preview/${previewFrames[key]}/thumbnail.webp`}
         onLoad={handleLoad}
       />
-      <NoThumbSlider
-        ref={sliderRef}
-        className="absolute inset-x-0 bottom-0 z-30"
-        value={[key]}
-        onValueChange={onManualSeek}
-        onValueCommit={onStopManualSeek}
-        min={0}
-        step={1}
-        max={previewFrames.length - 1}
-        onMouseMove={isMobile ? undefined : onProgressHover}
-      />
+      {showProgress && (
+        <NoThumbSlider
+          ref={sliderRef}
+          className={`absolute inset-x-0 bottom-0 z-30 cursor-col-resize ${manualFrame ? "h-4" : "h-2"}`}
+          value={[key]}
+          onValueChange={onManualSeek}
+          onValueCommit={onStopManualSeek}
+          min={0}
+          step={1}
+          max={previewFrames.length - 1}
+          onMouseMove={isMobile ? undefined : onProgressHover}
+        />
+      )}
     </div>
   );
 }

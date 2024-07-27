@@ -53,9 +53,10 @@ export default function DebugCameraImage({
       <AutoUpdatingCameraImage
         camera={cameraConfig.name}
         searchParams={searchParams}
+        cameraClasses="relative w-full h-full flex justify-center"
       />
       <Button onClick={handleToggleSettings} variant="link" size="sm">
-        <span className="w-5 h-5">
+        <span className="h-5 w-5">
           <LuSettings />
         </span>{" "}
         <span>{showSettings ? "Hide" : "Show"} Options</span>
@@ -84,7 +85,7 @@ type DebugSettingsProps = {
 
 function DebugSettings({ handleSetOption, options }: DebugSettingsProps) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
       <div className="flex items-center space-x-2">
         <Switch
           id="bbox"

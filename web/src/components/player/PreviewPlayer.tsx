@@ -15,6 +15,7 @@ import { baseUrl } from "@/api/baseUrl";
 import { isAndroid, isChrome, isMobile } from "react-device-detect";
 import { TimeRange } from "@/types/timeline";
 import { Skeleton } from "../ui/skeleton";
+import { cn } from "@/lib/utils";
 
 type PreviewPlayerProps = {
   className?: string;
@@ -39,6 +40,33 @@ export default function PreviewPlayer({
 }: PreviewPlayerProps) {
   const [currentHourFrame, setCurrentHourFrame] = useState<string>();
 
+  const currentPreview = useMemo(() => {
+    return cameraPreviews.find(
+      (preview) =>
+        preview.camera == camera &&
+        Math.round(preview.start) >= timeRange.after &&
+        Math.floor(preview.end) <= timeRange.before,
+    );
+  }, [cameraPreviews, camera, timeRange]);
+
+  if (currentPreview) {
+    return (
+      <PreviewVideoPlayer
+        className={className}
+        camera={camera}
+        timeRange={timeRange}
+        cameraPreviews={cameraPreviews}
+        initialPreview={currentPreview}
+        startTime={startTime}
+        isScrubbing={isScrubbing}
+        currentHourFrame={currentHourFrame}
+        onControllerReady={onControllerReady}
+        onClick={onClick}
+        setCurrentHourFrame={setCurrentHourFrame}
+      />
+    );
+  }
+
   if (isCurrentHour(timeRange.before)) {
     return (
       <PreviewFramesPlayer
@@ -54,18 +82,14 @@ export default function PreviewPlayer({
   }
 
   return (
-    <PreviewVideoPlayer
-      className={className}
-      camera={camera}
-      timeRange={timeRange}
-      cameraPreviews={cameraPreviews}
-      startTime={startTime}
-      isScrubbing={isScrubbing}
-      currentHourFrame={currentHourFrame}
-      onControllerReady={onControllerReady}
-      onClick={onClick}
-      setCurrentHourFrame={setCurrentHourFrame}
-    />
+    <div
+      className={cn(
+        "flex size-full items-center justify-center rounded-lg bg-background_alt text-primary md:rounded-2xl",
+        className,
+      )}
+    >
+      No Preview Found
+    </div>
   );
 }
 
@@ -88,6 +112,7 @@ type PreviewVideoPlayerProps = {
   camera: string;
   timeRange: TimeRange;
   cameraPreviews: Preview[];
+  initialPreview?: Preview;
   startTime?: number;
   isScrubbing: boolean;
   currentHourFrame?: string;
@@ -100,6 +125,7 @@ function PreviewVideoPlayer({
   camera,
   timeRange,
   cameraPreviews,
+  initialPreview,
   startTime,
   isScrubbing,
   currentHourFrame,
@@ -146,17 +172,11 @@ function PreviewVideoPlayer({
 
   const [firstLoad, setFirstLoad] = useState(true);
 
-  const initialPreview = useMemo(() => {
-    return cameraPreviews.find(
-      (preview) =>
-        preview.camera == camera &&
-        Math.round(preview.start) >= timeRange.after &&
-        Math.floor(preview.end) <= timeRange.before,
-    );
-
-    // we only want to calculate this once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => {
+    if (cameraPreviews && cameraPreviews.length > 0) {
+      setFirstLoad(false);
+    }
+  }, [cameraPreviews]);
 
   const [currentPreview, setCurrentPreview] = useState(initialPreview);
 
@@ -181,6 +201,7 @@ function PreviewVideoPlayer({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoSize, setVideoSize] = useState<number[]>([0, 0]);
+  const [changeoverTimeout, setChangeoverTimeout] = useState<NodeJS.Timeout>();
 
   const changeSource = useCallback(
     (newPreview: Preview | undefined, video: HTMLVideoElement | null) => {
@@ -204,6 +225,15 @@ function PreviewVideoPlayer({
       }
 
       setCurrentPreview(newPreview);
+      const timeout = setTimeout(() => {
+        if (timeout) {
+          clearTimeout(timeout);
+          setChangeoverTimeout(undefined);
+        }
+
+        previewRef.current?.load();
+      }, 1000);
+      setChangeoverTimeout(timeout);
 
       // we only want this to change when current preview changes
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -224,6 +254,7 @@ function PreviewVideoPlayer({
     );
 
     if (preview != currentPreview) {
+      controller.newPreviewLoaded = false;
       changeSource(preview, previewRef.current);
     }
 
@@ -238,13 +269,24 @@ function PreviewVideoPlayer({
 
   return (
     <div
-      className={`relative rounded-2xl w-full flex justify-center bg-black overflow-hidden ${onClick ? "cursor-pointer" : ""} ${className ?? ""}`}
+      className={cn(
+        "relative flex w-full justify-center overflow-hidden rounded-lg bg-black md:rounded-2xl",
+        onClick && "cursor-pointer",
+        className,
+      )}
       onClick={onClick}
     >
       <img
         className={`absolute size-full object-contain ${currentHourFrame ? "visible" : "invisible"}`}
         src={currentHourFrame}
-        onLoad={() => previewRef.current?.load()}
+        onLoad={() => {
+          if (changeoverTimeout) {
+            clearTimeout(changeoverTimeout);
+            setChangeoverTimeout(undefined);
+          }
+
+          previewRef.current?.load();
+        }}
       />
       <video
         ref={previewRef}
@@ -279,15 +321,18 @@ function PreviewVideoPlayer({
         }}
       >
         {currentPreview != undefined && (
-          <source src={currentPreview.src} type={currentPreview.type} />
+          <source
+            src={`${baseUrl}${currentPreview.src.substring(1)}`}
+            type={currentPreview.type}
+          />
         )}
       </video>
       {cameraPreviews && !currentPreview && (
-        <div className="absolute inset-0 text-white rounded-2xl flex justify-center items-center">
-          No Preview Found
+        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-background_alt text-primary dark:bg-black md:rounded-2xl">
+          No Preview Found for {camera.replaceAll("_", " ")}
         </div>
       )}
-      {firstLoad && <Skeleton className="absolute size-full aspect-video" />}
+      {firstLoad && <Skeleton className="absolute aspect-video size-full" />}
     </div>
   );
 }
@@ -301,6 +346,7 @@ class PreviewVideoController extends PreviewController {
   private preview: Preview | undefined = undefined;
   private timeToSeek: number | undefined = undefined;
   public scrubbing = false;
+  public newPreviewLoaded = true;
   private seeking = false;
 
   constructor(
@@ -319,7 +365,12 @@ class PreviewVideoController extends PreviewController {
   }
 
   override scrubToTimestamp(time: number): boolean {
-    if (!this.previewRef.current || !this.preview || !this.timeRange) {
+    if (
+      !this.newPreviewLoaded ||
+      !this.previewRef.current ||
+      !this.preview ||
+      !this.timeRange
+    ) {
       return false;
     }
 
@@ -370,6 +421,7 @@ class PreviewVideoController extends PreviewController {
   }
 
   previewReady() {
+    this.newPreviewLoaded = true;
     this.seeking = false;
     this.previewRef.current?.pause();
 
@@ -438,6 +490,12 @@ function PreviewFramesPlayer({
   const [firstLoad, setFirstLoad] = useState(true);
 
   useEffect(() => {
+    if (previewFrames != undefined && previewFrames.length == 0) {
+      setFirstLoad(false);
+    }
+  }, [previewFrames]);
+
+  useEffect(() => {
     if (!controller) {
       return;
     }
@@ -476,20 +534,24 @@ function PreviewFramesPlayer({
 
   return (
     <div
-      className={`relative w-full flex justify-center ${className ?? ""} ${onClick ? "cursor-pointer" : ""}`}
+      className={cn(
+        "relative flex w-full justify-center",
+        className,
+        onClick && "cursor-pointer",
+      )}
       onClick={onClick}
     >
       <img
         ref={imgRef}
-        className={`size-full object-contain rounded-2xl bg-black`}
+        className={`size-full rounded-lg bg-black object-contain md:rounded-2xl`}
         onLoad={onImageLoaded}
       />
       {previewFrames?.length === 0 && (
-        <div className="absolute inset-x-0 top-1/2 -y-translate-1/2 bg-black text-white rounded-2xl align-center text-center">
-          No Preview Found
+        <div className="-y-translate-1/2 align-center absolute inset-x-0 top-1/2 rounded-lg bg-background_alt text-center text-primary dark:bg-black md:rounded-2xl">
+          No Preview Found for {camera.replaceAll("_", " ")}
         </div>
       )}
-      {firstLoad && <Skeleton className="absolute size-full aspect-video" />}
+      {firstLoad && <Skeleton className="absolute aspect-video size-full" />}
     </div>
   );
 }

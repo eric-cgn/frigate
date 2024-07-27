@@ -1,12 +1,14 @@
+import { useFullscreen } from "@/hooks/use-fullscreen";
 import {
   useHashState,
   usePersistedOverlayState,
+  useSearchEffect,
 } from "@/hooks/use-overlay-state";
 import { FrigateConfig } from "@/types/frigateConfig";
 import LiveBirdseyeView from "@/views/live/LiveBirdseyeView";
 import LiveCameraView from "@/views/live/LiveCameraView";
 import LiveDashboardView from "@/views/live/LiveDashboardView";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 
 function Live() {
@@ -15,10 +17,26 @@ function Live() {
   // selection
 
   const [selectedCameraName, setSelectedCameraName] = useHashState();
-  const [cameraGroup] = usePersistedOverlayState(
+  const [cameraGroup, setCameraGroup] = usePersistedOverlayState(
     "cameraGroup",
     "default" as string,
   );
+
+  useSearchEffect("group", (cameraGroup) => {
+    if (config && cameraGroup) {
+      const group = config.camera_groups[cameraGroup];
+
+      if (group) {
+        setCameraGroup(cameraGroup);
+      }
+    }
+  });
+
+  // fullscreen
+
+  const mainRef = useRef<HTMLDivElement | null>(null);
+
+  const { fullscreen, toggleFullscreen } = useFullscreen(mainRef);
 
   // document title
 
@@ -38,7 +56,13 @@ function Live() {
   // settings
 
   const includesBirdseye = useMemo(() => {
-    if (config && cameraGroup && cameraGroup != "default") {
+    if (
+      config &&
+      Object.keys(config.camera_groups).length &&
+      cameraGroup &&
+      config.camera_groups[cameraGroup] &&
+      cameraGroup != "default"
+    ) {
       return config.camera_groups[cameraGroup].cameras.includes("birdseye");
     } else {
       return false;
@@ -50,7 +74,12 @@ function Live() {
       return [];
     }
 
-    if (cameraGroup && cameraGroup != "default") {
+    if (
+      Object.keys(config.camera_groups).length &&
+      cameraGroup &&
+      config.camera_groups[cameraGroup] &&
+      cameraGroup != "default"
+    ) {
       const group = config.camera_groups[cameraGroup];
       return Object.values(config.cameras)
         .filter((conf) => conf.enabled && group.cameras.includes(conf.name))
@@ -67,20 +96,31 @@ function Live() {
     [cameras, selectedCameraName],
   );
 
-  if (selectedCameraName == "birdseye") {
-    return <LiveBirdseyeView />;
-  }
-
-  if (selectedCamera) {
-    return <LiveCameraView camera={selectedCamera} />;
-  }
-
   return (
-    <LiveDashboardView
-      cameras={cameras}
-      includeBirdseye={includesBirdseye}
-      onSelectCamera={setSelectedCameraName}
-    />
+    <div className="size-full" ref={mainRef}>
+      {selectedCameraName === "birdseye" ? (
+        <LiveBirdseyeView
+          fullscreen={fullscreen}
+          toggleFullscreen={toggleFullscreen}
+        />
+      ) : selectedCamera ? (
+        <LiveCameraView
+          config={config}
+          camera={selectedCamera}
+          fullscreen={fullscreen}
+          toggleFullscreen={toggleFullscreen}
+        />
+      ) : (
+        <LiveDashboardView
+          cameras={cameras}
+          cameraGroup={cameraGroup ?? "default"}
+          includeBirdseye={includesBirdseye}
+          onSelectCamera={setSelectedCameraName}
+          fullscreen={fullscreen}
+          toggleFullscreen={toggleFullscreen}
+        />
+      )}
+    </div>
   );
 }
 

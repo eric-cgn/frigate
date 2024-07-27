@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { isDesktop } from "react-device-detect";
+import { cn } from "@/lib/utils";
 
 const variants = {
   primary: {
@@ -14,7 +15,7 @@ const variants = {
   overlay: {
     active: "font-bold text-white bg-selected rounded-full",
     inactive:
-      "text-primary-white rounded-full bg-gradient-to-br from-gray-400 to-gray-500 bg-gray-500",
+      "text-primary rounded-full bg-gradient-to-br from-gray-400 to-gray-500 bg-gray-500",
   },
 };
 
@@ -38,9 +39,11 @@ export default function CameraFeatureToggle({
   const content = (
     <div
       onClick={onClick}
-      className={`${className} flex flex-col justify-center items-center ${
-        variants[variant][isActive ? "active" : "inactive"]
-      }`}
+      className={cn(
+        className,
+        "flex flex-col items-center justify-center",
+        variants[variant][isActive ? "active" : "inactive"],
+      )}
     >
       <Icon
         className={`size-5 md:m-[6px] ${isActive ? "text-white" : "text-secondary-foreground"}`}

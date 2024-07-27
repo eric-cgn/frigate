@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import ActivityIndicator from "../indicators/activity-indicator";
 import { useResizeObserver } from "@/hooks/resize-observer";
+import { cn } from "@/lib/utils";
 
 type CameraImageProps = {
   className?: string;
@@ -88,26 +89,26 @@ export default function CameraImage({
     if (!config || scaledHeight === 0 || !canvasRef.current) {
       return;
     }
-    img.src = `${apiHost}api/${name}/latest.jpg?h=${scaledHeight}${
+    img.src = `${apiHost}api/${name}/latest.webp?h=${scaledHeight}${
       searchParams ? `&${searchParams}` : ""
     }`;
   }, [apiHost, canvasRef, name, img, searchParams, scaledHeight, config]);
 
   return (
     <div
-      className={`relative w-full h-full flex justify-center ${className}`}
+      className={cn("relative flex h-full w-full justify-center", className)}
       ref={containerRef}
     >
       {enabled ? (
         <canvas
-          className="rounded-2xl"
+          className="rounded-lg md:rounded-2xl"
           data-testid="cameraimage-canvas"
           height={scaledHeight}
           ref={canvasRef}
           width={scaledWidth}
         />
       ) : (
-        <div className="text-center pt-6">
+        <div className="pt-6 text-center">
           Camera is disabled in config, no stream or snapshot available!
         </div>
       )}

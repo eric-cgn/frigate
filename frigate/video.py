@@ -60,7 +60,7 @@ def stop_ffmpeg(ffmpeg_process, logger):
         logger.info("Waiting for ffmpeg to exit gracefully...")
         ffmpeg_process.communicate(timeout=30)
     except sp.TimeoutExpired:
-        logger.info("FFmpeg didnt exit. Force killing...")
+        logger.info("FFmpeg didn't exit. Force killing...")
         ffmpeg_process.kill()
         ffmpeg_process.communicate()
     ffmpeg_process = None
@@ -300,7 +300,7 @@ class CameraWatchdog(threading.Thread):
                 for d in os.listdir(CACHE_DIR)
                 if os.path.isfile(os.path.join(CACHE_DIR, d))
                 and d.endswith(".mp4")
-                and not d.startswith("clip_")
+                and not d.startswith("preview_")
             ]
         )
         newest_segment_time = latest_segment
@@ -360,6 +360,7 @@ def capture_camera(name, config: CameraConfig, process_info):
     stop_event = mp.Event()
 
     def receiveSignal(signalNumber, frame):
+        logger.debug(f"Capture camera received signal {signalNumber}")
         stop_event.set()
 
     signal.signal(signal.SIGTERM, receiveSignal)
@@ -413,9 +414,7 @@ def track_camera(
     object_filters = config.objects.filters
 
     motion_detector = ImprovedMotionDetector(
-        frame_shape,
-        config.motion,
-        config.detect.fps,
+        frame_shape, config.motion, config.detect.fps, name=config.name
     )
     object_detector = RemoteObjectDetector(
         name, labelmap, detection_queue, result_connection, model_config, stop_event
@@ -447,6 +446,12 @@ def track_camera(
         ptz_metrics,
         region_grid,
     )
+
+    # empty the frame queue
+    logger.info(f"{name}: emptying frame queue")
+    while not frame_queue.empty():
+        frame_time = frame_queue.get(False)
+        frame_manager.delete(f"{name}{frame_time}")
 
     logger.info(f"{name}: exiting subprocess")
 

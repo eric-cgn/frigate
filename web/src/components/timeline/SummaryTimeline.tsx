@@ -9,7 +9,6 @@ import {
 import { SummarySegment } from "./SummarySegment";
 import { useTimelineUtils } from "@/hooks/use-timeline-utils";
 import { ReviewSegment, ReviewSeverity } from "@/types/review";
-import { isMobile } from "react-device-detect";
 
 export type SummaryTimelineProps = {
   reviewTimelineRef: RefObject<HTMLDivElement>;
@@ -188,7 +187,7 @@ export function SummaryTimeline({
       e.stopPropagation();
 
       let clientY;
-      if (isMobile && e.nativeEvent instanceof TouchEvent) {
+      if ("TouchEvent" in window && e.nativeEvent instanceof TouchEvent) {
         clientY = e.nativeEvent.touches[0].clientY;
       } else if (e.nativeEvent instanceof MouseEvent) {
         clientY = e.nativeEvent.clientY;
@@ -239,7 +238,7 @@ export function SummaryTimeline({
       setIsDragging(true);
 
       let clientY;
-      if (isMobile && e.nativeEvent instanceof TouchEvent) {
+      if ("TouchEvent" in window && e.nativeEvent instanceof TouchEvent) {
         clientY = e.nativeEvent.touches[0].clientY;
       } else if (e.nativeEvent instanceof MouseEvent) {
         clientY = e.nativeEvent.clientY;
@@ -277,7 +276,7 @@ export function SummaryTimeline({
         }
         e.stopPropagation();
         let clientY;
-        if (isMobile && e instanceof TouchEvent) {
+        if ("TouchEvent" in window && e instanceof TouchEvent) {
           clientY = e.touches[0].clientY;
         } else if (e instanceof MouseEvent) {
           clientY = e.clientY;
@@ -340,12 +339,12 @@ export function SummaryTimeline({
 
   return (
     <div
-      className={`relative h-full overflow-hidden no-scrollbar select-none bg-secondary border-l-[1px] border-neutral-700`}
+      className={`no-scrollbar relative h-full select-none overflow-hidden border-l-[1px] border-neutral-700 bg-secondary`}
       role="scrollbar"
     >
       <div
         ref={summaryTimelineRef}
-        className="h-full flex flex-col relative z-10"
+        className="relative z-10 flex h-full flex-col"
         onClick={timelineClick}
         onTouchEnd={timelineClick}
       >
@@ -355,7 +354,7 @@ export function SummaryTimeline({
         ref={visibleSectionRef}
         onMouseDown={handleMouseDown}
         onTouchStart={handleMouseDown}
-        className={`bg-primary/30 z-20 absolute w-full touch-none ${
+        className={`absolute z-20 w-full touch-none bg-primary/30 ${
           isDragging ? "cursor-grabbing" : "cursor-grab"
         }`}
       ></div>

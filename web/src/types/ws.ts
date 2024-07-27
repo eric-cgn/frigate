@@ -31,13 +31,29 @@ type FrigateObjectState = {
 
 export interface FrigateReview {
   type: "new" | "update" | "end";
-  review: ReviewSegment;
+  before: ReviewSegment;
+  after: ReviewSegment;
 }
 
 export interface FrigateEvent {
   type: "new" | "update" | "end";
   before: FrigateObjectState;
   after: FrigateObjectState;
+}
+
+export type ObjectType = {
+  id: string;
+  label: string;
+  stationary: boolean;
+  area: number;
+  ratio: number;
+  score: number;
+  sub_label: string;
+};
+
+export interface FrigateCameraState {
+  motion: boolean;
+  objects: ObjectType[];
 }
 
 export type ToggleableSetting = "ON" | "OFF";

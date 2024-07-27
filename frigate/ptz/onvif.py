@@ -51,7 +51,10 @@ class OnvifController:
                             cam.onvif.port,
                             cam.onvif.user,
                             cam.onvif.password,
-                            wsdl_dir=Path(find_spec("onvif").origin).parent / "../wsdl",
+                            wsdl_dir=str(
+                                Path(find_spec("onvif").origin).parent / "wsdl"
+                            ).replace("dist-packages/onvif", "site-packages"),
+                            adjust_time=cam.onvif.ignore_time_mismatch,
                         ),
                         "init": False,
                         "active": False,
@@ -80,6 +83,7 @@ class OnvifController:
 
         try:
             profiles = media.GetProfiles()
+            logger.debug(f"Onvif profiles for {camera_name}: {profiles}")
         except (ONVIFError, Fault, TransportError) as e:
             logger.error(
                 f"Unable to get Onvif media profiles for camera: {camera_name}: {e}"
@@ -90,11 +94,15 @@ class OnvifController:
         for key, onvif_profile in enumerate(profiles):
             if (
                 onvif_profile.VideoEncoderConfiguration
-                and onvif_profile.VideoEncoderConfiguration.Encoding == "H264"
                 and onvif_profile.PTZConfiguration
-                and onvif_profile.PTZConfiguration.DefaultContinuousPanTiltVelocitySpace
-                is not None
+                and (
+                    onvif_profile.PTZConfiguration.DefaultContinuousPanTiltVelocitySpace
+                    is not None
+                    or onvif_profile.PTZConfiguration.DefaultContinuousZoomVelocitySpace
+                    is not None
+                )
             ):
+                # use the first profile that has a valid ptz configuration
                 profile = onvif_profile
                 logger.debug(f"Selected Onvif profile for {camera_name}: {profile}")
                 break
@@ -161,7 +169,7 @@ class OnvifController:
                 logger.warning(f"Unable to get status from camera: {camera_name}: {e}")
                 status = None
 
-            # autoracking relative panning/tilting needs a relative zoom value set to 0
+            # autotracking relative panning/tilting needs a relative zoom value set to 0
             # if camera supports relative movement
             if (
                 self.config.cameras[camera_name].onvif.autotracking.zooming

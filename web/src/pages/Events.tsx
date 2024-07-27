@@ -1,15 +1,18 @@
 import ActivityIndicator from "@/components/indicators/activity-indicator";
 import useApiFilter from "@/hooks/use-api-filter";
+import { useCameraPreviews } from "@/hooks/use-camera-previews";
 import { useTimezone } from "@/hooks/use-date-utils";
-import { useOverlayState } from "@/hooks/use-overlay-state";
+import { useOverlayState, useSearchEffect } from "@/hooks/use-overlay-state";
+import { usePersistence } from "@/hooks/use-persistence";
 import { FrigateConfig } from "@/types/frigateConfig";
-import { Preview } from "@/types/preview";
 import { RecordingStartingPoint } from "@/types/record";
 import {
+  REVIEW_PADDING,
   ReviewFilter,
   ReviewSegment,
   ReviewSeverity,
   ReviewSummary,
+  SegmentedReviewData,
 } from "@/types/review";
 import EventView from "@/views/events/EventView";
 import { RecordingView } from "@/views/events/RecordingView";
@@ -30,8 +33,28 @@ export default function Events() {
     "alert",
   );
 
+  const [showReviewed, setShowReviewed] = usePersistence("showReviewed", false);
+
   const [recording, setRecording] =
     useOverlayState<RecordingStartingPoint>("recording");
+
+  useSearchEffect("id", (reviewId: string) => {
+    axios
+      .get(`review/${reviewId}`)
+      .then((resp) => {
+        if (resp.status == 200 && resp.data) {
+          setRecording(
+            {
+              camera: resp.data.camera,
+              startTime: resp.data.start_time - REVIEW_PADDING,
+              severity: resp.data.severity,
+            },
+            true,
+          );
+        }
+      })
+      .catch(() => {});
+  });
 
   const [startTime, setStartTime] = useState<number>();
 
@@ -47,6 +70,21 @@ export default function Events() {
 
   const [reviewFilter, setReviewFilter, reviewSearchParams] =
     useApiFilter<ReviewFilter>();
+
+  useSearchEffect("group", (reviewGroup) => {
+    if (config && reviewGroup && reviewGroup != "default") {
+      const group = config.camera_groups[reviewGroup];
+      const isBirdseyeOnly =
+        group.cameras.length == 1 && group.cameras[0] == "birdseye";
+
+      if (group && !isBirdseyeOnly) {
+        setReviewFilter({
+          ...reviewFilter,
+          cameras: group.cameras,
+        });
+      }
+    }
+  });
 
   const onUpdateFilter = useCallback(
     (newFilter: ReviewFilter) => {
@@ -103,6 +141,7 @@ export default function Events() {
     const params = {
       cameras: reviewSearchParams["cameras"],
       labels: reviewSearchParams["labels"],
+      zones: reviewSearchParams["zones"],
       reviewed: 1,
       before: reviewSearchParams["before"] || last24Hours.before,
       after: reviewSearchParams["after"] || last24Hours.after,
@@ -119,6 +158,66 @@ export default function Events() {
     },
   );
 
+  const reviewItems = useMemo<SegmentedReviewData>(() => {
+    if (!reviews) {
+      return undefined;
+    }
+
+    const all: ReviewSegment[] = [];
+    const alerts: ReviewSegment[] = [];
+    const detections: ReviewSegment[] = [];
+    const motion: ReviewSegment[] = [];
+
+    reviews?.forEach((segment) => {
+      all.push(segment);
+
+      switch (segment.severity) {
+        case "alert":
+          alerts.push(segment);
+          break;
+        case "detection":
+          detections.push(segment);
+          break;
+        default:
+          motion.push(segment);
+          break;
+      }
+    });
+
+    return {
+      all: all,
+      alert: alerts,
+      detection: detections,
+      significant_motion: motion,
+    };
+  }, [reviews]);
+
+  const currentItems = useMemo(() => {
+    if (!reviewItems || !severity) {
+      return null;
+    }
+
+    let current;
+
+    if (reviewFilter?.showAll) {
+      current = reviewItems.all;
+    } else {
+      current = reviewItems[severity];
+    }
+
+    if (!current || current.length == 0) {
+      return [];
+    }
+
+    if (!showReviewed) {
+      return current.filter((seg) => !seg.has_been_reviewed);
+    } else {
+      return current;
+    }
+    // only refresh when severity or filter changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [severity, reviewFilter, showReviewed, reviewItems?.all.length]);
+
   // review summary
 
   const { data: reviewSummary, mutate: updateSummary } = useSWR<ReviewSummary>(
@@ -128,6 +227,7 @@ export default function Events() {
         timezone: timezone,
         cameras: reviewSearchParams["cameras"] ?? null,
         labels: reviewSearchParams["labels"] ?? null,
+        zones: reviewSearchParams["zones"] ?? null,
       },
     ],
     {
@@ -143,58 +243,25 @@ export default function Events() {
   }, [updateSummary]);
 
   // preview videos
-  const [previewKey, setPreviewKey] = useState(0);
   const previewTimes = useMemo(() => {
-    if (!reviews || reviews.length == 0) {
-      return undefined;
-    }
+    const startDate = new Date(selectedTimeRange.after * 1000);
+    startDate.setUTCMinutes(0, 0, 0);
 
-    const startDate = new Date();
-    startDate.setMinutes(0, 0, 0);
-
-    let endDate;
-    if (previewKey == 0) {
-      endDate = new Date(reviews.at(-1)?.end_time || 0);
-      endDate.setHours(0, 0, 0, 0);
-    } else {
-      endDate = new Date();
-      endDate.setMilliseconds(0);
-    }
+    const endDate = new Date(selectedTimeRange.before * 1000);
+    endDate.setHours(endDate.getHours() + 1, 0, 0, 0);
 
     return {
-      start: startDate.getTime() / 1000,
-      end: endDate.getTime() / 1000,
+      after: startDate.getTime() / 1000,
+      before: endDate.getTime() / 1000,
     };
-  }, [reviews, previewKey]);
-  const { data: allPreviews } = useSWR<Preview[]>(
-    previewTimes
-      ? `preview/all/start/${previewTimes.start}/end/${previewTimes.end}`
-      : null,
-    { revalidateOnFocus: false, revalidateOnReconnect: false },
+  }, [selectedTimeRange]);
+
+  const allPreviews = useCameraPreviews(
+    previewTimes ?? { after: 0, before: 0 },
+    {
+      fetchPreviews: previewTimes != undefined,
+    },
   );
-
-  // Set a timeout to update previews on the hour
-  useEffect(() => {
-    if (!allPreviews || allPreviews.length == 0) {
-      return;
-    }
-
-    const callback = () => {
-      const nextPreviewStart = new Date(
-        allPreviews[allPreviews.length - 1].end * 1000,
-      );
-      nextPreviewStart.setHours(nextPreviewStart.getHours() + 1);
-
-      if (Date.now() > nextPreviewStart.getTime()) {
-        setPreviewKey(10 * Math.random());
-      }
-    };
-    document.addEventListener("focusin", callback);
-
-    return () => {
-      document.removeEventListener("focusin", callback);
-    };
-  }, [allPreviews]);
 
   // review status
 
@@ -364,13 +431,16 @@ export default function Events() {
   } else {
     return (
       <EventView
-        reviews={reviews}
+        reviewItems={reviewItems}
+        currentReviewItems={currentItems}
         reviewSummary={reviewSummary}
         relevantPreviews={allPreviews}
         timeRange={selectedTimeRange}
         filter={reviewFilter}
         severity={severity ?? "alert"}
         startTime={startTime}
+        showReviewed={showReviewed ?? false}
+        setShowReviewed={setShowReviewed}
         setSeverity={setSeverity}
         markItemAsReviewed={markItemAsReviewed}
         markAllItemsAsReviewed={markAllItemsAsReviewed}

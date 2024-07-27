@@ -164,7 +164,7 @@ Accepts the following query string parameters:
 | `motion`    | int  | Draw blue boxes for areas with detected motion (0 or 1)            |
 | `regions`   | int  | Draw green boxes for areas where object detection was run (0 or 1) |
 
-You can access a higher resolution mjpeg stream by appending `h=height-in-pixels` to the endpoint. For example `http://localhost:5000/api/back?h=1080`. You can also increase the FPS by appending `fps=frame-rate` to the URL such as `http://localhost:5000/api/back?fps=10` or both with `?fps=10&h=1000`.
+You can access a higher resolution mjpeg stream by appending `h=height-in-pixels` to the endpoint. For example `/api/back?h=1080`. You can also increase the FPS by appending `fps=frame-rate` to the URL such as `/api/back?fps=10` or both with `?fps=10&h=1000`.
 
 ### `GET /api/<camera_name>/latest.jpg[?h=300]`
 
@@ -381,9 +381,13 @@ List of frames in the preview cache for the time range. Previews are only kept i
 
 Specific preview frame from preview cache.
 
-### `GET /<camera>/start/<start-timestamp>/end/<end-timestamp>/preview.gif`
+### `GET /<camera>/start/<start-timestamp>/end/<end-timestamp>/preview`
 
-Gif made from preview video / frames during this time range
+Looping image made from preview video / frames during this time range.
+
+| param     | Type | Description                      |
+| --------- | ---- | -------------------------------- |
+| `format`  | str  | Format of preview [`gif`, `mp4`] |
 
 ## Recordings
 
@@ -450,9 +454,14 @@ Reviews from the database. Accepts the following query string parameters:
 | `after`    | int  | Epoch time                                                     |
 | `cameras`  | str  | , separated list of cameras                                    |
 | `labels`   | str  | , separated list of labels                                     |
+| `zones`    | str  | , separated list of zones                                      |
 | `reviewed` | int  | Include items that have been reviewed (0 or 1)                 |
 | `limit`    | int  | Limit the number of events returned                            |
 | `severity` | str  | Limit items to severity (alert, detection, significant_motion) |
+
+### `GET /api/review/<id>`
+
+Get review with `id` from the database.
 
 ### `GET /api/review/summary`
 
@@ -464,21 +473,53 @@ Summary of reviews for the last 30 days. Accepts the following query string para
 | `labels`   | str  | , separated list of labels  |
 | `timezone` | str  | Timezone name               |
 
-### `POST /api/review/<id>/viewed`
+### `POST /api/reviews/viewed`
 
-Mark an item as reviewed.
+Mark item(s) as reviewed.
+
+**Required Body:**
+
+```json
+{
+  "ids": ["123", "456"] // , separated list of review IDs
+}
+```
 
 ### `DELETE /api/review/<id>/viewed`
 
 Mark an item as not reviewed.
 
-### `POST /api/reviews/<ids>/viewed`
+### `POST /api/reviews/delete`
 
-Mark multiple items as reviewed. IDs are passed in as a comma separated list.
+Delete review items.
 
-### `DELETE /api/reviews/<ids>`
+**Required Body:**
 
-Delete items. IDs are passed in as a comma separated list
+```json
+{
+  "ids": ["123", "456"] // , separated list of review IDs
+}
+```
+
+### `GET /review/activity/motion`
+
+Get the motion activity for camera(s) during a specified time period.
+
+| param     | Type | Description                 |
+| --------- | ---- | --------------------------- |
+| `before`  | int  | Epoch time                  |
+| `after`   | int  | Epoch time                  |
+| `cameras` | str  | , separated list of cameras |
+
+### `GET /review/activity/audio`
+
+Get the audio activity for camera(s) during a specified time period.
+
+| param     | Type | Description                 |
+| --------- | ---- | --------------------------- |
+| `before`  | int  | Epoch time                  |
+| `after`   | int  | Epoch time                  |
+| `cameras` | str  | , separated list of cameras |
 
 ## Timeline
 

@@ -3,28 +3,24 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 type Theme = "dark" | "light" | "system";
 type ColorScheme =
   | "theme-blue"
-  | "theme-gold"
   | "theme-green"
-  | "theme-nature"
-  | "theme-netflix"
   | "theme-nord"
-  | "theme-orange"
   | "theme-red"
+  | "theme-high-contrast"
   | "theme-default";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const colorSchemes: ColorScheme[] = [
   "theme-blue",
-  "theme-gold",
   "theme-green",
-  "theme-nature",
-  "theme-netflix",
   "theme-nord",
-  "theme-orange",
   "theme-red",
+  "theme-high-contrast",
   "theme-default",
 ];
 
 // Helper function to generate friendly color scheme names
+// eslint-disable-next-line react-refresh/only-export-components
 export const friendlyColorSchemeName = (className: string): string => {
   const words = className.split("-").slice(1); // Exclude the first word (e.g., 'theme')
   return words
@@ -136,6 +132,7 @@ export function ThemeProvider({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = () => {
   const context = useContext(ThemeProviderContext);
 

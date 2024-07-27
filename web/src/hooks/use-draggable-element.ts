@@ -1,7 +1,8 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { isMobile } from "react-device-detect";
 import scrollIntoView from "scroll-into-view-if-needed";
 import { useTimelineUtils } from "./use-timeline-utils";
+import { FrigateConfig } from "@/types/frigateConfig";
+import useSWR from "swr";
 
 type DraggableElementProps = {
   contentRef: React.RefObject<HTMLElement>;
@@ -50,6 +51,8 @@ function useDraggableElement({
   dense,
   timelineSegments,
 }: DraggableElementProps) {
+  const { data: config } = useSWR<FrigateConfig>("config");
+
   const [clientYPosition, setClientYPosition] = useState<number | null>(null);
   const [initialClickAdjustment, setInitialClickAdjustment] = useState(0);
   const [elementScrollIntoView, setElementScrollIntoView] = useState(true);
@@ -88,7 +91,7 @@ function useDraggableElement({
   const getClientYPosition = useCallback(
     (e: MouseEvent | TouchEvent) => {
       let clientY;
-      if (isMobile && e instanceof TouchEvent) {
+      if ("TouchEvent" in window && e instanceof TouchEvent) {
         clientY = e.touches[0].clientY;
       } else if (e instanceof MouseEvent) {
         clientY = e.clientY;
@@ -114,7 +117,7 @@ function useDraggableElement({
       setIsDragging(true);
 
       let clientY;
-      if (isMobile && e.nativeEvent instanceof TouchEvent) {
+      if ("TouchEvent" in window && e.nativeEvent instanceof TouchEvent) {
         clientY = e.nativeEvent.touches[0].clientY;
       } else if (e.nativeEvent instanceof MouseEvent) {
         clientY = e.nativeEvent.clientY;
@@ -171,6 +174,7 @@ function useDraggableElement({
             draggableElementTimeRef.current.textContent = new Date(
               segmentStartTime * 1000,
             ).toLocaleTimeString([], {
+              hour12: config?.ui.time_format != "24hour",
               hour: "2-digit",
               minute: "2-digit",
               ...(segmentDuration < 60 && !dense && { second: "2-digit" }),
@@ -197,6 +201,7 @@ function useDraggableElement({
       setDraggableElementTime,
       setDraggableElementPosition,
       dense,
+      config,
     ],
   );
 

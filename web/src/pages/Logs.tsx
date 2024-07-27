@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { LogData, LogLine, LogSeverity } from "@/types/log";
+import { LogData, LogLine, LogSeverity, LogType, logTypes } from "@/types/log";
 import copy from "copy-to-clipboard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
@@ -10,50 +10,61 @@ import { LogLevelFilterButton } from "@/components/filter/LogLevelFilter";
 import { FaCopy } from "react-icons/fa6";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
-import { isDesktop } from "react-device-detect";
+import {
+  isDesktop,
+  isMobile,
+  isMobileOnly,
+  isTablet,
+} from "react-device-detect";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
-
-const logTypes = ["frigate", "go2rtc", "nginx"] as const;
-type LogType = (typeof logTypes)[number];
+import { cn } from "@/lib/utils";
+import { MdVerticalAlignBottom } from "react-icons/md";
+import { parseLogLines } from "@/utils/logUtil";
+import useKeyboardListener from "@/hooks/use-keyboard-listener";
 
 type LogRange = { start: number; end: number };
-
-const frigateDateStamp = /\[[\d\s-:]*]/;
-const frigateSeverity = /(DEBUG)|(INFO)|(WARNING)|(ERROR)/;
-const frigateSection = /[\w.]*/;
-
-const goSeverity = /(DEB )|(INF )|(WRN )|(ERR )/;
-const goSection = /\[[\w]*]/;
-
-const ngSeverity = /(GET)|(POST)|(PUT)|(PATCH)|(DELETE)/;
 
 function Logs() {
   const [logService, setLogService] = useState<LogType>("frigate");
 
   useEffect(() => {
-    document.title = `${logService[0].toUpperCase()}${logService.substring(1)} Stats - Frigate`;
+    document.title = `${logService[0].toUpperCase()}${logService.substring(1)} Logs - Frigate`;
   }, [logService]);
 
   // log data handling
 
+  const logPageSize = useMemo(() => {
+    if (isMobileOnly) {
+      return 15;
+    }
+
+    if (isTablet) {
+      return 25;
+    }
+
+    return 40;
+  }, []);
+
   const [logRange, setLogRange] = useState<LogRange>({ start: 0, end: 0 });
   const [logs, setLogs] = useState<string[]>([]);
+  const [logLines, setLogLines] = useState<LogLine[]>([]);
 
   useEffect(() => {
     axios
-      .get(`logs/${logService}?start=-100`)
+      .get(`logs/${logService}?start=-${logPageSize}`)
       .then((resp) => {
         if (resp.status == 200) {
           const data = resp.data as LogData;
           setLogRange({
-            start: Math.max(0, data.totalLines - 100),
+            start: Math.max(0, data.totalLines - logPageSize),
             end: data.totalLines,
           });
           setLogs(data.lines);
+          setLogLines(parseLogLines(logService, data.lines));
         }
       })
       .catch(() => {});
-  }, [logService]);
+  }, [logPageSize, logService]);
 
   useEffect(() => {
     if (!logs || logs.length == 0) {
@@ -73,6 +84,10 @@ function Logs() {
                 end: data.totalLines,
               });
               setLogs([...logs, ...data.lines]);
+              setLogLines([
+                ...logLines,
+                ...parseLogLines(logService, data.lines),
+              ]);
             }
           }
         })
@@ -84,143 +99,18 @@ function Logs() {
         clearTimeout(id);
       }
     };
-  }, [logs, logService, logRange]);
+    // we need to listen on the current range of visible items
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logLines, logService, logRange]);
 
   // convert to log data
-
-  const logLines = useMemo<LogLine[]>(() => {
-    if (!logs) {
-      return [];
-    }
-
-    if (logService == "frigate") {
-      return logs
-        .map((line) => {
-          const match = frigateDateStamp.exec(line);
-
-          if (!match) {
-            const infoIndex = line.indexOf("[INFO]");
-
-            if (infoIndex != -1) {
-              return {
-                dateStamp: line.substring(0, 19),
-                severity: "info",
-                section: "startup",
-                content: line.substring(infoIndex + 6).trim(),
-              };
-            }
-
-            return {
-              dateStamp: line.substring(0, 19),
-              severity: "unknown",
-              section: "unknown",
-              content: line.substring(30).trim(),
-            };
-          }
-
-          const sectionMatch = frigateSection.exec(
-            line.substring(match.index + match[0].length).trim(),
-          );
-
-          if (!sectionMatch) {
-            return null;
-          }
-
-          return {
-            dateStamp: match.toString().slice(1, -1),
-            severity: frigateSeverity
-              .exec(line)
-              ?.at(0)
-              ?.toString()
-              ?.toLowerCase() as LogSeverity,
-            section: sectionMatch.toString(),
-            content: line
-              .substring(line.indexOf(":", match.index + match[0].length) + 2)
-              .trim(),
-          };
-        })
-        .filter((value) => value != null) as LogLine[];
-    } else if (logService == "go2rtc") {
-      return logs
-        .map((line) => {
-          if (line.length == 0) {
-            return null;
-          }
-
-          const severity = goSeverity.exec(line);
-
-          let section =
-            goSection.exec(line)?.toString()?.slice(1, -1) ?? "startup";
-
-          if (frigateSeverity.exec(section)) {
-            section = "startup";
-          }
-
-          let contentStart;
-
-          if (section == "startup") {
-            if (severity) {
-              contentStart = severity.index + severity[0].length;
-            } else {
-              contentStart = line.lastIndexOf("]") + 1;
-            }
-          } else {
-            contentStart = line.indexOf(section) + section.length + 2;
-          }
-
-          let severityCat: LogSeverity;
-          switch (severity?.at(0)?.toString().trim()) {
-            case "INF":
-              severityCat = "info";
-              break;
-            case "WRN":
-              severityCat = "warning";
-              break;
-            case "ERR":
-              severityCat = "error";
-              break;
-            case "DBG":
-            case "TRC":
-              severityCat = "debug";
-              break;
-            default:
-              severityCat = "info";
-          }
-
-          return {
-            dateStamp: line.substring(0, 19),
-            severity: severityCat,
-            section: section,
-            content: line.substring(contentStart).trim(),
-          };
-        })
-        .filter((value) => value != null) as LogLine[];
-    } else if (logService == "nginx") {
-      return logs
-        .map((line) => {
-          if (line.length == 0) {
-            return null;
-          }
-
-          return {
-            dateStamp: line.substring(0, 19),
-            severity: "info",
-            section: ngSeverity.exec(line)?.at(0)?.toString() ?? "META",
-            content: line.substring(line.indexOf(" ", 20)).trim(),
-          };
-        })
-        .filter((value) => value != null) as LogLine[];
-    } else {
-      return [];
-    }
-  }, [logs, logService]);
 
   const handleCopyLogs = useCallback(() => {
     if (logs) {
       copy(logs.join("\n"));
       toast.success(
         logRange.start == 0
-          ? "Coplied logs to clipboard"
+          ? "Copied logs to clipboard"
           : "Copied visible logs to clipboard",
       );
     } else {
@@ -259,31 +149,38 @@ function Logs() {
       }
 
       try {
-        startObserver.current = new IntersectionObserver((entries) => {
-          if (entries[0].isIntersecting && logRange.start > 0) {
-            const start = Math.max(0, logRange.start - 100);
+        startObserver.current = new IntersectionObserver(
+          (entries) => {
+            if (entries[0].isIntersecting && logRange.start > 0) {
+              const start = Math.max(0, logRange.start - logPageSize);
 
-            axios
-              .get(`logs/${logService}?start=${start}&end=${logRange.start}`)
-              .then((resp) => {
-                if (resp.status == 200) {
-                  const data = resp.data as LogData;
+              axios
+                .get(`logs/${logService}?start=${start}&end=${logRange.start}`)
+                .then((resp) => {
+                  if (resp.status == 200) {
+                    const data = resp.data as LogData;
 
-                  if (data.lines.length > 0) {
-                    setLogRange({
-                      start: start,
-                      end: logRange.end,
-                    });
-                    setLogs([...data.lines, ...logs]);
+                    if (data.lines.length > 0) {
+                      setLogRange({
+                        start: start,
+                        end: logRange.end,
+                      });
+                      setLogs([...data.lines, ...logs]);
+                      setLogLines([
+                        ...parseLogLines(logService, data.lines),
+                        ...logLines,
+                      ]);
+                    }
                   }
-                }
-              })
-              .catch(() => {});
-            contentRef.current?.scrollBy({
-              top: 10,
-            });
-          }
-        });
+                })
+                .catch(() => {});
+              contentRef.current?.scrollBy({
+                top: 10,
+              });
+            }
+          },
+          { rootMargin: `${10 * (isMobile ? 64 : 48)}px 0px 0px 0px` },
+        );
         if (node) startObserver.current.observe(node);
       } catch (e) {
         // no op
@@ -330,20 +227,55 @@ function Logs() {
 
   const [selectedLog, setSelectedLog] = useState<LogLine>();
 
+  // interaction
+
+  useKeyboardListener(
+    ["PageDown", "PageUp", "ArrowDown", "ArrowUp"],
+    (key, modifiers) => {
+      if (!modifiers.down) {
+        return;
+      }
+
+      switch (key) {
+        case "PageDown":
+          contentRef.current?.scrollBy({
+            top: 480,
+          });
+          break;
+        case "PageUp":
+          contentRef.current?.scrollBy({
+            top: -480,
+          });
+          break;
+        case "ArrowDown":
+          contentRef.current?.scrollBy({
+            top: 48,
+          });
+          break;
+        case "ArrowUp":
+          contentRef.current?.scrollBy({
+            top: -48,
+          });
+          break;
+      }
+    },
+  );
+
   return (
-    <div className="size-full p-2 flex flex-col">
-      <Toaster position="top-center" />
+    <div className="flex size-full flex-col p-2">
+      <Toaster position="top-center" closeButton={true} />
       <LogInfoDialog logLine={selectedLog} setLogLine={setSelectedLog} />
 
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <ToggleGroup
-          className="*:px-3 *:py-4 *:rounded-md"
+          className="*:rounded-md *:px-3 *:py-4"
           type="single"
           size="sm"
           value={logService}
           onValueChange={(value: LogType) => {
             if (value) {
               setLogs([]);
+              setLogLines([]);
               setFilterSeverity(undefined);
               setLogService(value);
             }
@@ -352,7 +284,7 @@ function Logs() {
           {Object.values(logTypes).map((item) => (
             <ToggleGroupItem
               key={item}
-              className={`flex items-center justify-between gap-2 ${logService == item ? "" : "text-gray-500"}`}
+              className={`flex items-center justify-between gap-2 ${logService == item ? "" : "text-muted-foreground"}`}
               value={item}
               aria-label={`Select ${item}`}
             >
@@ -362,12 +294,12 @@ function Logs() {
         </ToggleGroup>
         <div className="flex items-center gap-2">
           <Button
-            className="flex justify-between items-center gap-2"
+            className="flex items-center justify-between gap-2"
             size="sm"
             onClick={handleCopyLogs}
           >
-            <FaCopy />
-            <div className="hidden md:block text-primary">
+            <FaCopy className="text-secondary-foreground" />
+            <div className="hidden text-primary md:block">
               Copy to Clipboard
             </div>
           </Button>
@@ -380,7 +312,7 @@ function Logs() {
 
       {initialScroll && !endVisible && (
         <Button
-          className="absolute bottom-8 left-[50%] -translate-x-[50%] rounded-md text-primary bg-secondary-foreground z-20 p-2"
+          className="absolute bottom-8 left-[50%] z-20 flex -translate-x-[50%] items-center gap-1 rounded-md p-2"
           onClick={() =>
             contentRef.current?.scrollTo({
               top: contentRef.current?.scrollHeight,
@@ -388,24 +320,25 @@ function Logs() {
             })
           }
         >
+          <MdVerticalAlignBottom />
           Jump to Bottom
         </Button>
       )}
 
-      <div className="relative size-full flex flex-col my-2 font-mono text-sm sm:p-2 whitespace-pre-wrap bg-background_alt border border-secondary rounded-md overflow-hidden">
-        <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 *:px-2 *:py-3 *:text-sm *:text-primary/40">
-          <div className="p-1 flex items-center capitalize">Type</div>
-          <div className="col-span-2 sm:col-span-1 flex items-center">
+      <div className="font-mono relative my-2 flex size-full flex-col overflow-hidden whitespace-pre-wrap rounded-md border border-secondary bg-background_alt text-sm sm:p-2">
+        <div className="grid grid-cols-5 *:px-2 *:py-3 *:text-sm *:text-primary/40 sm:grid-cols-8 md:grid-cols-12">
+          <div className="flex items-center p-1 capitalize">Type</div>
+          <div className="col-span-2 flex items-center sm:col-span-1">
             Timestamp
           </div>
           <div className="col-span-2 flex items-center">Tag</div>
-          <div className="col-span-5 sm:col-span-4 md:col-span-8 flex items-center">
+          <div className="col-span-5 flex items-center sm:col-span-4 md:col-span-8">
             Message
           </div>
         </div>
         <div
           ref={contentRef}
-          className="w-full flex flex-col overflow-y-auto no-scrollbar"
+          className="no-scrollbar flex w-full flex-col overflow-y-auto overscroll-contain"
         >
           {logLines.length > 0 &&
             [...Array(logRange.end).keys()].map((idx) => {
@@ -448,7 +381,7 @@ function Logs() {
           {logLines.length > 0 && <div id="page-bottom" ref={endLogRef} />}
         </div>
         {logLines.length == 0 && (
-          <ActivityIndicator className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2" />
+          <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
         )}
       </div>
     </div>
@@ -472,22 +405,26 @@ function LogLineData({
   return (
     <div
       ref={startRef}
-      className={`w-full py-2 grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 gap-2 border-secondary border-t cursor-pointer hover:bg-muted ${className} *:text-sm`}
+      className={cn(
+        "grid w-full cursor-pointer grid-cols-5 gap-2 border-t border-secondary py-2 hover:bg-muted sm:grid-cols-8 md:grid-cols-12",
+        className,
+        "*:text-sm",
+      )}
       onClick={onSelect}
     >
-      <div className="h-full p-1 flex items-center gap-2">
+      <div className="flex h-full items-center gap-2 p-1">
         <LogChip severity={line.severity} onClickSeverity={onClickSeverity} />
       </div>
-      <div className="h-full col-span-2 sm:col-span-1 flex items-center">
+      <div className="col-span-2 flex h-full items-center sm:col-span-1">
         {line.dateStamp}
       </div>
-      <div className="size-full pr-2 col-span-2 flex items-center">
-        <div className="w-full overflow-hidden whitespace-nowrap text-ellipsis">
+      <div className="col-span-2 flex size-full items-center pr-2">
+        <div className="w-full overflow-hidden text-ellipsis whitespace-nowrap">
           {line.section}
         </div>
       </div>
-      <div className="size-full pl-2 sm:pl-0 pr-2 col-span-5 sm:col-span-4 md:col-span-8 flex justify-between items-center">
-        <div className="w-full overflow-hidden whitespace-nowrap text-ellipsis">
+      <div className="col-span-5 flex size-full items-center justify-between pl-2 pr-2 sm:col-span-4 sm:pl-0 md:col-span-8">
+        <div className="w-full overflow-hidden text-ellipsis whitespace-nowrap">
           {line.content}
         </div>
       </div>

@@ -2,16 +2,27 @@ import WebRtcPlayer from "./WebRTCPlayer";
 import { CameraConfig } from "@/types/frigateConfig";
 import AutoUpdatingCameraImage from "../camera/AutoUpdatingCameraImage";
 import ActivityIndicator from "../indicators/activity-indicator";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MSEPlayer from "./MsePlayer";
 import JSMpegPlayer from "./JSMpegPlayer";
 import { MdCircle } from "react-icons/md";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useCameraActivity } from "@/hooks/use-camera-activity";
-import { LivePlayerMode } from "@/types/live";
+import {
+  LivePlayerError,
+  LivePlayerMode,
+  VideoResolutionType,
+} from "@/types/live";
 import useCameraLiveMode from "@/hooks/use-camera-live-mode";
+import { getIconForLabel } from "@/utils/iconUtil";
+import Chip from "../indicators/Chip";
+import { capitalizeFirstLetter } from "@/utils/stringUtil";
+import { cn } from "@/lib/utils";
+import { TbExclamationCircle } from "react-icons/tb";
 
 type LivePlayerProps = {
   cameraRef?: (ref: HTMLDivElement | null) => void;
+  containerRef?: React.MutableRefObject<HTMLDivElement | null>;
   className?: string;
   cameraConfig: CameraConfig;
   preferredLiveMode?: LivePlayerMode;
@@ -21,11 +32,15 @@ type LivePlayerProps = {
   micEnabled?: boolean; // only webrtc supports mic
   iOSCompatFullScreen?: boolean;
   pip?: boolean;
+  autoLive?: boolean;
   onClick?: () => void;
+  setFullResolution?: React.Dispatch<React.SetStateAction<VideoResolutionType>>;
+  onError?: (error: LivePlayerError) => void;
 };
 
 export default function LivePlayer({
   cameraRef = undefined,
+  containerRef,
   className,
   cameraConfig,
   preferredLiveMode,
@@ -35,11 +50,16 @@ export default function LivePlayer({
   micEnabled = false,
   iOSCompatFullScreen = false,
   pip,
+  autoLive = true,
   onClick,
+  setFullResolution,
+  onError,
 }: LivePlayerProps) {
+  const internalContainerRef = useRef<HTMLDivElement | null>(null);
   // camera activity
 
-  const { activeMotion, activeTracking } = useCameraActivity(cameraConfig);
+  const { activeMotion, activeTracking, objects, offline } =
+    useCameraActivity(cameraConfig);
 
   const cameraActive = useMemo(
     () =>
@@ -53,122 +73,250 @@ export default function LivePlayer({
   const liveMode = useCameraLiveMode(cameraConfig, preferredLiveMode);
 
   const [liveReady, setLiveReady] = useState(false);
-  useEffect(() => {
-    if (!liveReady) {
-      if (cameraActive && liveMode == "jsmpeg") {
-        setLiveReady(true);
-      }
 
+  const liveReadyRef = useRef(liveReady);
+  const cameraActiveRef = useRef(cameraActive);
+
+  useEffect(() => {
+    liveReadyRef.current = liveReady;
+    cameraActiveRef.current = cameraActive;
+  }, [liveReady, cameraActive]);
+
+  useEffect(() => {
+    if (!autoLive || !liveReady) {
       return;
     }
 
     if (!cameraActive) {
-      setLiveReady(false);
+      const timer = setTimeout(() => {
+        if (liveReadyRef.current && !cameraActiveRef.current) {
+          setLiveReady(false);
+        }
+      }, 500);
+
+      return () => {
+        clearTimeout(timer);
+      };
     }
     // live mode won't change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraActive, liveReady]);
+  }, [autoLive, cameraActive, liveReady]);
 
   // camera still state
 
   const stillReloadInterval = useMemo(() => {
-    if (!windowVisible) {
+    if (!windowVisible || offline || !showStillWithoutActivity) {
       return -1; // no reason to update the image when the window is not visible
+    }
+
+    if (liveReady && !cameraActive) {
+      return 300;
     }
 
     if (liveReady) {
       return 60000;
     }
 
-    if (cameraActive) {
-      return 200;
+    if (activeMotion || activeTracking) {
+      if (autoLive) {
+        return 200;
+      } else {
+        return 59000;
+      }
     }
 
     return 30000;
-  }, [liveReady, cameraActive, windowVisible]);
+  }, [
+    autoLive,
+    showStillWithoutActivity,
+    liveReady,
+    activeMotion,
+    activeTracking,
+    offline,
+    windowVisible,
+    cameraActive,
+  ]);
+
+  useEffect(() => {
+    setLiveReady(false);
+  }, [preferredLiveMode]);
+
+  const playerIsPlaying = useCallback(() => {
+    setLiveReady(true);
+  }, []);
 
   if (!cameraConfig) {
     return <ActivityIndicator />;
   }
 
   let player;
-  if (liveMode == "webrtc") {
+  if (!autoLive) {
+    player = null;
+  } else if (liveMode == "webrtc") {
     player = (
       <WebRtcPlayer
-        className={`rounded-2xl size-full ${liveReady ? "" : "hidden"}`}
+        className={`size-full rounded-lg md:rounded-2xl ${liveReady ? "" : "hidden"}`}
         camera={cameraConfig.live.stream_name}
-        playbackEnabled={cameraActive}
+        playbackEnabled={cameraActive || liveReady}
         audioEnabled={playAudio}
         microphoneEnabled={micEnabled}
         iOSCompatFullScreen={iOSCompatFullScreen}
-        onPlaying={() => setLiveReady(true)}
+        onPlaying={playerIsPlaying}
         pip={pip}
+        onError={onError}
       />
     );
   } else if (liveMode == "mse") {
     if ("MediaSource" in window || "ManagedMediaSource" in window) {
       player = (
         <MSEPlayer
-          className={`rounded-2xl size-full ${liveReady ? "" : "hidden"}`}
-          camera={cameraConfig.name}
-          playbackEnabled={cameraActive}
+          className={`size-full rounded-lg md:rounded-2xl ${liveReady ? "" : "hidden"}`}
+          camera={cameraConfig.live.stream_name}
+          playbackEnabled={cameraActive || liveReady}
           audioEnabled={playAudio}
-          onPlaying={() => setLiveReady(true)}
+          onPlaying={playerIsPlaying}
           pip={pip}
+          setFullResolution={setFullResolution}
+          onError={onError}
         />
       );
     } else {
       player = (
         <div className="w-5xl text-center text-sm">
-          MSE is only supported on iOS 17.1+. You'll need to update if available
-          or use jsmpeg / webRTC streams. See the docs for more info.
+          iOS 17.1 or greater is required for this live stream type.
         </div>
       );
     }
   } else if (liveMode == "jsmpeg") {
-    player = (
-      <JSMpegPlayer
-        className="size-full flex justify-center rounded-2xl overflow-hidden"
-        camera={cameraConfig.name}
-        width={cameraConfig.detect.width}
-        height={cameraConfig.detect.height}
-      />
-    );
+    if (cameraActive || !showStillWithoutActivity || liveReady) {
+      player = (
+        <JSMpegPlayer
+          className="flex justify-center overflow-hidden rounded-lg md:rounded-2xl"
+          camera={cameraConfig.name}
+          width={cameraConfig.detect.width}
+          height={cameraConfig.detect.height}
+          playbackEnabled={
+            cameraActive || !showStillWithoutActivity || liveReady
+          }
+          containerRef={containerRef ?? internalContainerRef}
+          onPlaying={playerIsPlaying}
+        />
+      );
+    } else {
+      player = null;
+    }
   } else {
     player = <ActivityIndicator />;
   }
 
   return (
     <div
-      ref={cameraRef}
+      ref={cameraRef ?? internalContainerRef}
       data-camera={cameraConfig.name}
-      className={`relative flex justify-center ${liveMode == "jsmpeg" ? "size-full" : "w-full"} outline cursor-pointer ${
-        activeTracking
-          ? "outline-severity_alert outline-3 rounded-2xl shadow-severity_alert"
-          : "outline-0 outline-background"
-      } transition-all duration-500 ${className}`}
+      className={cn(
+        "relative flex w-full cursor-pointer justify-center outline",
+        activeTracking &&
+          ((showStillWithoutActivity && !liveReady) || liveReady)
+          ? "outline-3 rounded-lg shadow-severity_alert outline-severity_alert md:rounded-2xl"
+          : "outline-0 outline-background",
+        "transition-all duration-500",
+        className,
+      )}
       onClick={onClick}
     >
-      <div className="absolute top-0 inset-x-0 rounded-2xl z-10 w-full h-[30%] bg-gradient-to-b from-black/20 to-transparent pointer-events-none"></div>
-      <div className="absolute bottom-0 inset-x-0 rounded-2xl z-10 w-full h-[10%] bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
+      {((showStillWithoutActivity && !liveReady) || liveReady) && (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[30%] w-full rounded-lg bg-gradient-to-b from-black/20 to-transparent md:rounded-2xl"></div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-[10%] w-full rounded-lg bg-gradient-to-t from-black/20 to-transparent md:rounded-2xl"></div>
+        </>
+      )}
       {player}
+      {!offline && !showStillWithoutActivity && !liveReady && (
+        <ActivityIndicator />
+      )}
+
+      {((showStillWithoutActivity && !liveReady) || liveReady) &&
+        objects.length > 0 && (
+          <div className="absolute left-0 top-2 z-40">
+            <Tooltip>
+              <div className="flex">
+                <TooltipTrigger asChild>
+                  <div className="mx-3 pb-1 text-sm text-white">
+                    <Chip
+                      className={`z-0 flex items-start justify-between space-x-1 bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500`}
+                    >
+                      {[
+                        ...new Set([
+                          ...(objects || []).map(({ label }) => label),
+                        ]),
+                      ]
+                        .map((label) => {
+                          return getIconForLabel(label, "size-3 text-white");
+                        })
+                        .sort()}
+                    </Chip>
+                  </div>
+                </TooltipTrigger>
+              </div>
+              <TooltipContent className="capitalize">
+                {[
+                  ...new Set([
+                    ...(objects || []).map(({ label, sub_label }) =>
+                      label.endsWith("verified") ? sub_label : label,
+                    ),
+                  ]),
+                ]
+                  .filter(
+                    (label) =>
+                      label !== undefined && !label.includes("-verified"),
+                  )
+                  .map((label) => capitalizeFirstLetter(label))
+                  .sort()
+                  .join(", ")
+                  .replaceAll("-verified", "")}
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        )}
 
       <div
-        className={`absolute inset-0 w-full ${
-          showStillWithoutActivity && !liveReady ? "visible" : "invisible"
-        }`}
+        className={cn(
+          "absolute inset-0 w-full",
+          showStillWithoutActivity && !liveReady ? "visible" : "invisible",
+        )}
       >
         <AutoUpdatingCameraImage
           className="size-full"
           camera={cameraConfig.name}
           showFps={false}
           reloadInterval={stillReloadInterval}
+          cameraClasses="relative size-full flex justify-center"
         />
       </div>
 
-      <div className="absolute right-2 top-2 size-4">
-        {activeMotion && (
-          <MdCircle className="size-2 drop-shadow-md shadow-danger text-danger animate-pulse" />
+      {offline && !showStillWithoutActivity && (
+        <div className="flex size-full flex-col items-center">
+          <p className="mb-5">
+            {capitalizeFirstLetter(cameraConfig.name)} is offline
+          </p>
+          <TbExclamationCircle className="mb-3 size-10" />
+          <p>No frames have been received, check error logs</p>
+        </div>
+      )}
+
+      <div className="absolute right-2 top-2">
+        {autoLive &&
+          !offline &&
+          activeMotion &&
+          ((showStillWithoutActivity && !liveReady) || liveReady) && (
+            <MdCircle className="mr-2 size-2 animate-pulse text-danger shadow-danger drop-shadow-md" />
+          )}
+        {offline && showStillWithoutActivity && (
+          <Chip
+            className={`z-0 flex items-start justify-between space-x-1 bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500 text-xs capitalize`}
+          >
+            {cameraConfig.name.replaceAll("_", " ")}
+          </Chip>
         )}
       </div>
     </div>

@@ -1,12 +1,9 @@
 @import "/themes/tailwind-base.css";
 @import "/themes/theme-default.css";
 @import "/themes/theme-blue.css";
-@import "/themes/theme-gold.css";
 @import "/themes/theme-green.css";
-@import "/themes/theme-nature.css";
-@import "/themes/theme-netflix.css";
+@import "/themes/theme-high-contrast.css";
 @import "/themes/theme-nord.css";
-@import "/themes/theme-orange.css";
 @import "/themes/theme-red.css";
 
 @tailwind base;
@@ -22,6 +19,16 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+@layer utilities {
+  .scrollbar-container {
+    @apply scrollbar-thin scrollbar-track-background_alt scrollbar-thumb-border scrollbar-track-rounded-full scrollbar-thumb-rounded-full;
+  }
+}
+
+html {
+  overscroll-behavior: none;
 }
 
 /* Hide scrollbar for Chrome, Safari and Opera */
@@ -161,4 +168,14 @@
   font-weight: 900;
   font-display: swap;
   src: url("../fonts/Inter-BlackItalic.woff2") format("woff2");
+}
+
+.react-resizable-handle {
+  z-index: 30;
+  background-image: none !important;
+}
+
+.react-grid-item.react-grid-placeholder {
+  border: 3px solid #a00000 !important;
+  opacity: 0.5 !important;
 }

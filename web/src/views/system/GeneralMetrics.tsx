@@ -5,14 +5,15 @@ import { useFrigateStats } from "@/api/ws";
 import {
   DetectorCpuThreshold,
   DetectorMemThreshold,
+  DetectorTempThreshold,
   GPUMemThreshold,
   GPUUsageThreshold,
   InferenceThreshold,
 } from "@/types/graph";
 import { Button } from "@/components/ui/button";
 import VainfoDialog from "@/components/overlay/VainfoDialog";
-import { ThresholdBarGraph } from "@/components/graph/SystemGraph";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ThresholdBarGraph } from "@/components/graph/SystemGraph";
 
 type GeneralMetricsProps = {
   lastUpdated: number;
@@ -39,7 +40,7 @@ export default function GeneralMetrics({
   );
 
   const [statsHistory, setStatsHistory] = useState<FrigateStats[]>([]);
-  const { payload: updatedStats } = useFrigateStats();
+  const updatedStats = useFrigateStats();
 
   useEffect(() => {
     if (initialStats == undefined || initialStats.length == 0) {
@@ -56,7 +57,7 @@ export default function GeneralMetrics({
     }
 
     if (updatedStats.service.last_updated > lastUpdated) {
-      setStatsHistory([...statsHistory, updatedStats]);
+      setStatsHistory([...statsHistory.slice(1), updatedStats]);
       setLastUpdated(Date.now() / 1000);
     }
   }, [initialStats, updatedStats, statsHistory, lastUpdated, setLastUpdated]);
@@ -105,6 +106,44 @@ export default function GeneralMetrics({
     return Object.values(series);
   }, [statsHistory]);
 
+  const detTempSeries = useMemo(() => {
+    if (!statsHistory) {
+      return [];
+    }
+
+    if (
+      statsHistory.length > 0 &&
+      Object.keys(statsHistory[0].service.temperatures).length == 0
+    ) {
+      return undefined;
+    }
+
+    const series: {
+      [key: string]: { name: string; data: { x: number; y: number }[] };
+    } = {};
+
+    statsHistory.forEach((stats, statsIdx) => {
+      if (!stats) {
+        return;
+      }
+
+      Object.entries(stats.detectors).forEach(([key], cIdx) => {
+        if (cIdx <= Object.keys(stats.service.temperatures).length) {
+          if (!(key in series)) {
+            series[key] = {
+              name: key,
+              data: [],
+            };
+          }
+
+          const temp = Object.values(stats.service.temperatures)[cIdx];
+          series[key].data.push({ x: statsIdx + 1, y: Math.round(temp) });
+        }
+      });
+    });
+    return Object.values(series);
+  }, [statsHistory]);
+
   const detCpuSeries = useMemo(() => {
     if (!statsHistory) {
       return [];
@@ -124,10 +163,14 @@ export default function GeneralMetrics({
           series[key] = { name: key, data: [] };
         }
 
-        series[key].data.push({
-          x: statsIdx + 1,
-          y: stats.cpu_usages[detStats.pid.toString()].cpu,
-        });
+        const data = stats.cpu_usages[detStats.pid.toString()].cpu;
+
+        if (data != undefined) {
+          series[key].data.push({
+            x: statsIdx + 1,
+            y: data,
+          });
+        }
       });
     });
     return Object.values(series);
@@ -171,6 +214,7 @@ export default function GeneralMetrics({
     const series: {
       [key: string]: { name: string; data: { x: number; y: string }[] };
     } = {};
+    let hasValidGpu = false;
 
     statsHistory.forEach((stats, statsIdx) => {
       if (!stats) {
@@ -182,9 +226,17 @@ export default function GeneralMetrics({
           series[key] = { name: key, data: [] };
         }
 
-        series[key].data.push({ x: statsIdx + 1, y: stats.gpu.slice(0, -1) });
+        if (stats.gpu) {
+          hasValidGpu = true;
+          series[key].data.push({ x: statsIdx + 1, y: stats.gpu.slice(0, -1) });
+        }
       });
     });
+
+    if (!hasValidGpu) {
+      return [];
+    }
+
     return Object.keys(series).length > 0 ? Object.values(series) : [];
   }, [statsHistory]);
 
@@ -204,6 +256,7 @@ export default function GeneralMetrics({
     const series: {
       [key: string]: { name: string; data: { x: number; y: string }[] };
     } = {};
+    let hasValidGpu = false;
 
     statsHistory.forEach((stats, statsIdx) => {
       if (!stats) {
@@ -215,9 +268,17 @@ export default function GeneralMetrics({
           series[key] = { name: key, data: [] };
         }
 
-        series[key].data.push({ x: statsIdx + 1, y: stats.mem.slice(0, -1) });
+        if (stats.mem) {
+          hasValidGpu = true;
+          series[key].data.push({ x: statsIdx + 1, y: stats.mem.slice(0, -1) });
+        }
       });
     });
+
+    if (!hasValidGpu) {
+      return [];
+    }
+
     return Object.values(series);
   }, [statsHistory]);
 
@@ -243,10 +304,14 @@ export default function GeneralMetrics({
             series[key] = { name: key, data: [] };
           }
 
-          series[key].data.push({
-            x: statsIdx + 1,
-            y: stats.cpu_usages[procStats.pid.toString()].cpu,
-          });
+          const data = stats.cpu_usages[procStats.pid.toString()].cpu;
+
+          if (data != undefined) {
+            series[key].data.push({
+              x: statsIdx + 1,
+              y: data,
+            });
+          }
         }
       });
     });
@@ -287,13 +352,15 @@ export default function GeneralMetrics({
     <>
       <VainfoDialog showVainfo={showVainfo} setShowVainfo={setShowVainfo} />
 
-      <div className="size-full mt-4 flex flex-col overflow-y-auto">
-        <div className="text-muted-foreground text-sm font-medium">
+      <div className="scrollbar-container mt-4 flex size-full flex-col overflow-y-auto">
+        <div className="text-sm font-medium text-muted-foreground">
           Detectors
         </div>
-        <div className="w-full mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div
+          className={`mt-4 grid w-full grid-cols-1 gap-2 ${detTempSeries == undefined ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}
+        >
           {statsHistory.length != 0 ? (
-            <div className="p-2.5 bg-background_alt rounded-2xl">
+            <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
               <div className="mb-5">Detector Inference Speed</div>
               {detInferenceTimeSeries.map((series) => (
                 <ThresholdBarGraph
@@ -308,10 +375,32 @@ export default function GeneralMetrics({
               ))}
             </div>
           ) : (
-            <Skeleton className="w-full aspect-video" />
+            <Skeleton className="aspect-video w-full rounded-lg md:rounded-2xl" />
           )}
           {statsHistory.length != 0 ? (
-            <div className="p-2.5 bg-background_alt rounded-2xl">
+            <>
+              {detTempSeries && (
+                <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
+                  <div className="mb-5">Detector Temperature</div>
+                  {detTempSeries.map((series) => (
+                    <ThresholdBarGraph
+                      key={series.name}
+                      graphId={`${series.name}-temp`}
+                      name={series.name}
+                      unit="°C"
+                      threshold={DetectorTempThreshold}
+                      updateTimes={updateTimes}
+                      data={[series]}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <Skeleton className="aspect-video w-full" />
+          )}
+          {statsHistory.length != 0 ? (
+            <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
               <div className="mb-5">Detector CPU Usage</div>
               {detCpuSeries.map((series) => (
                 <ThresholdBarGraph
@@ -326,10 +415,10 @@ export default function GeneralMetrics({
               ))}
             </div>
           ) : (
-            <Skeleton className="w-full aspect-video" />
+            <Skeleton className="aspect-video w-full" />
           )}
           {statsHistory.length != 0 ? (
-            <div className="p-2.5 bg-background_alt rounded-2xl">
+            <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
               <div className="mb-5">Detector Memory Usage</div>
               {detMemSeries.map((series) => (
                 <ThresholdBarGraph
@@ -344,14 +433,14 @@ export default function GeneralMetrics({
               ))}
             </div>
           ) : (
-            <Skeleton className="w-full aspect-video" />
+            <Skeleton className="aspect-video w-full" />
           )}
         </div>
 
         {(statsHistory.length == 0 || statsHistory[0].gpu_usages) && (
           <>
             <div className="mt-4 flex items-center justify-between">
-              <div className="text-muted-foreground text-sm font-medium">
+              <div className="text-sm font-medium text-muted-foreground">
                 GPUs
               </div>
               {canGetGpuInfo && (
@@ -364,9 +453,9 @@ export default function GeneralMetrics({
                 </Button>
               )}
             </div>
-            <div className=" mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
               {statsHistory.length != 0 ? (
-                <div className="p-2.5 bg-background_alt rounded-2xl">
+                <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
                   <div className="mb-5">GPU Usage</div>
                   {gpuSeries.map((series) => (
                     <ThresholdBarGraph
@@ -381,12 +470,12 @@ export default function GeneralMetrics({
                   ))}
                 </div>
               ) : (
-                <Skeleton className="w-full aspect-video" />
+                <Skeleton className="aspect-video w-full" />
               )}
               {statsHistory.length != 0 ? (
                 <>
                   {gpuMemSeries && (
-                    <div className="p-2.5 bg-background_alt rounded-2xl">
+                    <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
                       <div className="mb-5">GPU Memory</div>
                       {gpuMemSeries.map((series) => (
                         <ThresholdBarGraph
@@ -403,18 +492,18 @@ export default function GeneralMetrics({
                   )}
                 </>
               ) : (
-                <Skeleton className="w-full aspect-video" />
+                <Skeleton className="aspect-video w-full" />
               )}
             </div>
           </>
         )}
 
-        <div className="mt-4 text-muted-foreground text-sm font-medium">
+        <div className="mt-4 text-sm font-medium text-muted-foreground">
           Other Processes
         </div>
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {statsHistory.length != 0 ? (
-            <div className="p-2.5 bg-background_alt rounded-2xl">
+            <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
               <div className="mb-5">Process CPU Usage</div>
               {otherProcessCpuSeries.map((series) => (
                 <ThresholdBarGraph
@@ -429,10 +518,10 @@ export default function GeneralMetrics({
               ))}
             </div>
           ) : (
-            <Skeleton className="w-full aspect-tall" />
+            <Skeleton className="aspect-tall w-full" />
           )}
           {statsHistory.length != 0 ? (
-            <div className="p-2.5 bg-background_alt rounded-2xl">
+            <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
               <div className="mb-5">Process Memory Usage</div>
               {otherProcessMemSeries.map((series) => (
                 <ThresholdBarGraph
@@ -447,7 +536,7 @@ export default function GeneralMetrics({
               ))}
             </div>
           ) : (
-            <Skeleton className="w-full aspect-tall" />
+            <Skeleton className="aspect-tall w-full" />
           )}
         </div>
       </div>

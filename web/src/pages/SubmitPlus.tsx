@@ -3,6 +3,8 @@ import {
   CamerasFilterButton,
   GeneralFilterContent,
 } from "@/components/filter/ReviewFilterGroup";
+import Chip from "@/components/indicators/Chip";
+import ActivityIndicator from "@/components/indicators/activity-indicator";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,10 +25,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DualThumbSlider } from "@/components/ui/slider";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Event } from "@/types/event";
-import { FrigateConfig } from "@/types/frigateConfig";
+import { ATTRIBUTE_LABELS, FrigateConfig } from "@/types/frigateConfig";
+import { getIconForLabel } from "@/utils/iconUtil";
+import { capitalizeFirstLetter } from "@/utils/stringUtil";
 import axios from "axios";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isMobile } from "react-device-detect";
 import {
   FaList,
@@ -36,6 +45,9 @@ import {
 } from "react-icons/fa";
 import { PiSlidersHorizontalFill } from "react-icons/pi";
 import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
+
+const API_LIMIT = 100;
 
 export default function SubmitPlus() {
   const { data: config } = useSWR<FrigateConfig>("config");
@@ -56,20 +68,94 @@ export default function SubmitPlus() {
 
   // data
 
-  const { data: events, mutate: refresh } = useSWR<Event[]>([
-    "events",
-    {
-      limit: 100,
-      in_progress: 0,
-      is_submitted: 0,
-      cameras: selectedCameras ? selectedCameras.join(",") : null,
-      labels: selectedLabels ? selectedLabels.join(",") : null,
-      min_score: scoreRange ? scoreRange[0] : null,
-      max_score: scoreRange ? scoreRange[1] : null,
-      sort: sort ? sort : null,
+  const eventFetcher = useCallback((key: string) => {
+    const [path, params] = Array.isArray(key) ? key : [key, undefined];
+    return axios.get(path, { params }).then((res) => res.data);
+  }, []);
+
+  const getKey = useCallback(
+    (index: number, prevData: Event[]) => {
+      if (index > 0) {
+        const lastDate = prevData[prevData.length - 1].start_time;
+        return [
+          "events",
+          {
+            limit: API_LIMIT,
+            in_progress: 0,
+            is_submitted: 0,
+            has_snapshot: 1,
+            cameras: selectedCameras ? selectedCameras.join(",") : null,
+            labels: selectedLabels ? selectedLabels.join(",") : null,
+            min_score: scoreRange ? scoreRange[0] : null,
+            max_score: scoreRange ? scoreRange[1] : null,
+            sort: sort ? sort : null,
+            before: lastDate,
+          },
+        ];
+      }
+
+      return [
+        "events",
+        {
+          limit: 100,
+          in_progress: 0,
+          is_submitted: 0,
+          has_snapshot: 1,
+          cameras: selectedCameras ? selectedCameras.join(",") : null,
+          labels: selectedLabels ? selectedLabels.join(",") : null,
+          min_score: scoreRange ? scoreRange[0] : null,
+          max_score: scoreRange ? scoreRange[1] : null,
+          sort: sort ? sort : null,
+        },
+      ];
     },
-  ]);
+    [scoreRange, selectedCameras, selectedLabels, sort],
+  );
+
+  const {
+    data: eventPages,
+    mutate: refresh,
+    size,
+    setSize,
+    isValidating,
+  } = useSWRInfinite<Event[]>(getKey, eventFetcher, {
+    revalidateOnFocus: false,
+  });
+
+  const events = useMemo(
+    () => (eventPages ? eventPages.flat() : []),
+    [eventPages],
+  );
+
   const [upload, setUpload] = useState<Event>();
+
+  // paging
+
+  const isDone = useMemo(
+    () => (eventPages?.at(-1)?.length ?? 0) < API_LIMIT,
+    [eventPages],
+  );
+
+  const pagingObserver = useRef<IntersectionObserver | null>();
+  const lastEventRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (isValidating) return;
+      if (pagingObserver.current) pagingObserver.current.disconnect();
+      try {
+        pagingObserver.current = new IntersectionObserver((entries) => {
+          if (entries[0].isIntersecting && !isDone) {
+            setSize(size + 1);
+          }
+        });
+        if (node) pagingObserver.current.observe(node);
+      } catch (e) {
+        // no op
+      }
+    },
+    [isValidating, isDone, size, setSize],
+  );
+
+  // layout
 
   const grow = useMemo(() => {
     if (!config || !upload) {
@@ -102,18 +188,36 @@ export default function SubmitPlus() {
           });
 
       refresh(
-        (data: Event[] | undefined) => {
+        (data: Event[][] | undefined) => {
           if (!data) {
             return data;
           }
 
-          const index = data.findIndex((e) => e.id == upload.id);
+          let pageIndex = -1;
+          let index = -1;
+
+          data.forEach((page, pIdx) => {
+            const search = page.findIndex((e) => e.id == upload.id);
+
+            if (search != -1) {
+              pageIndex = pIdx;
+              index = search;
+            }
+          });
 
           if (index == -1) {
             return data;
           }
 
-          return [...data.slice(0, index), ...data.slice(index + 1)];
+          return [
+            ...data.slice(0, pageIndex),
+            [
+              ...data[pageIndex].slice(0, index),
+              { ...data[pageIndex][index], plus_id: "new_upload" },
+              ...data[pageIndex].slice(index + 1),
+            ],
+            ...data.slice(pageIndex + 1),
+          ];
         },
         { revalidate: false, populateCache: true },
       );
@@ -123,8 +227,8 @@ export default function SubmitPlus() {
   );
 
   return (
-    <div className="size-full flex flex-col">
-      <div className="w-full h-16 px-2 flex items-center justify-between overflow-x-auto">
+    <div className="flex size-full flex-col">
+      <div className="scrollbar-container flex h-16 w-full items-center justify-between overflow-x-auto px-2">
         <PlusFilterGroup
           selectedCameras={selectedCameras}
           selectedLabels={selectedLabels}
@@ -135,13 +239,13 @@ export default function SubmitPlus() {
         />
         <PlusSortSelector selectedSort={sort} setSelectedSort={setSort} />
       </div>
-      <div className="size-full flex flex-1 flex-wrap content-start gap-2 md:gap-4 overflow-y-auto no-scrollbar">
-        <div className="w-full p-2 grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+      <div className="no-scrollbar flex size-full flex-1 flex-wrap content-start gap-2 overflow-y-auto md:gap-4">
+        <div className="grid w-full gap-2 p-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           <Dialog
             open={upload != undefined}
             onOpenChange={(open) => (!open ? setUpload(undefined) : null)}
           >
-            <DialogContent className="md:max-w-4xl">
+            <DialogContent className="md:max-w-2xl lg:max-w-3xl xl:max-w-4xl">
               <DialogHeader>
                 <DialogTitle>Submit To Frigate+</DialogTitle>
                 <DialogDescription>
@@ -175,31 +279,61 @@ export default function SubmitPlus() {
           </Dialog>
 
           {events?.map((event) => {
-            if (event.data.type != "object") {
+            if (event.data.type != "object" || event.plus_id) {
               return;
             }
 
             return (
               <div
                 key={event.id}
-                className="w-full rounded-2xl aspect-video flex justify-center items-center bg-black cursor-pointer"
+                className="relative flex aspect-video w-full cursor-pointer items-center justify-center rounded-lg bg-black md:rounded-2xl"
                 onClick={() => setUpload(event)}
               >
+                <div className="absolute left-0 top-2 z-40">
+                  <Tooltip>
+                    <div className="flex">
+                      <TooltipTrigger asChild>
+                        <div className="mx-3 pb-1 text-sm text-white">
+                          <Chip
+                            className={`z-0 flex items-center justify-between space-x-1 bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500`}
+                          >
+                            {[event.label].map((object) => {
+                              return getIconForLabel(
+                                object,
+                                "size-3 text-white",
+                              );
+                            })}
+                            <div className="text-xs">
+                              {Math.round(event.data.score * 100)}%
+                            </div>
+                          </Chip>
+                        </div>
+                      </TooltipTrigger>
+                    </div>
+                    <TooltipContent className="capitalize">
+                      {[event.label]
+                        .map((text) => capitalizeFirstLetter(text))
+                        .sort()
+                        .join(", ")
+                        .replaceAll("-verified", "")}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
                 <img
-                  className="aspect-video h-full object-contain rounded-2xl"
+                  className="aspect-video h-full rounded-lg object-contain md:rounded-2xl"
                   src={`${baseUrl}api/events/${event.id}/snapshot.jpg`}
                   loading="lazy"
                 />
               </div>
             );
           })}
+          {!isValidating && !isDone && <div ref={lastEventRef} />}
+          {isValidating && <ActivityIndicator />}
         </div>
       </div>
     </div>
   );
 }
-
-const ATTRIBUTES = ["amazon", "face", "fedex", "license_plate", "ups"];
 
 type PlusFilterGroupProps = {
   selectedCameras: string[] | undefined;
@@ -237,7 +371,7 @@ function PlusFilterGroup({
     cameras.forEach((camera) => {
       const cameraConfig = config.cameras[camera];
       cameraConfig.objects.track.forEach((label) => {
-        if (!ATTRIBUTES.includes(label)) {
+        if (!ATTRIBUTE_LABELS.includes(label)) {
           labels.add(label);
         }
       });
@@ -261,7 +395,7 @@ function PlusFilterGroup({
   const Content = isMobile ? DrawerContent : DropdownMenuContent;
 
   return (
-    <div className="h-full flex justify-start gap-2 items-center">
+    <div className="flex h-full items-center justify-start gap-2">
       <CamerasFilterButton
         allCameras={allCameras}
         groups={[]}
@@ -286,7 +420,7 @@ function PlusFilterGroup({
             <FaList
               className={`${selectedLabels == undefined ? "text-secondary-foreground" : "text-selected-foreground"}`}
             />
-            <div className="hidden md:block text-primary">
+            <div className="hidden text-primary md:block">
               {selectedLabels == undefined
                 ? "All Labels"
                 : `${selectedLabels.length} Labels`}
@@ -319,15 +453,15 @@ function PlusFilterGroup({
             <PiSlidersHorizontalFill
               className={`${selectedScoreRange == undefined ? "text-secondary-foreground" : "text-selected-foreground"}`}
             />
-            <div className="hidden md:block text-primary">
+            <div className="hidden text-primary md:block">
               {selectedScoreRange == undefined
                 ? "Score Range"
-                : `${selectedScoreRange[0] * 100}% - ${selectedScoreRange[1] * 100}%`}
+                : `${Math.round(selectedScoreRange[0] * 100)}% - ${Math.round(selectedScoreRange[1] * 100)}%`}
             </div>
           </Button>
         </Trigger>
         <Content
-          className={`min-w-80 p-2 flex flex-col justify-center ${isMobile ? "gap-2 *:max-h-[75dvh]" : ""}`}
+          className={`flex min-w-80 flex-col justify-center p-2 ${isMobile ? "gap-2 *:max-h-[75dvh]" : ""}`}
         >
           <div className="flex items-center gap-1">
             <Input
@@ -362,7 +496,7 @@ function PlusFilterGroup({
             />
           </div>
           <DropdownMenuSeparator />
-          <div className="p-2 flex justify-evenly items-center">
+          <div className="flex items-center justify-evenly p-2">
             <Button
               variant="select"
               onClick={() => {
@@ -416,7 +550,7 @@ function PlusSortSelector({
   const Content = isMobile ? DrawerContent : DropdownMenuContent;
 
   return (
-    <div className="h-full flex justify-start gap-2 items-center">
+    <div className="flex h-full items-center justify-start gap-2">
       <Menu
         open={open}
         onOpenChange={(open) => {
@@ -441,24 +575,24 @@ function PlusSortSelector({
             <Sort
               className={`${selectedSort == undefined ? "text-secondary-foreground" : "text-selected-foreground"}`}
             />
-            <div className="hidden md:block text-primary">
+            <div className="hidden text-primary md:block">
               {selectedSort == undefined ? "Sort" : selectedSort.split("_")[0]}
             </div>
           </Button>
         </Trigger>
         <Content
-          className={`p-2 flex flex-col justify-center gap-2 ${isMobile ? "max-h-[75dvh]" : ""}`}
+          className={`flex flex-col justify-center gap-2 p-2 ${isMobile ? "max-h-[75dvh]" : ""}`}
         >
           <RadioGroup
             className={`flex flex-col gap-4 ${isMobile ? "mt-4" : ""}`}
             onValueChange={(value) => setCurrentSort(value)}
           >
-            <div className="w-full flex items-center gap-2">
+            <div className="flex w-full items-center gap-2">
               <RadioGroupItem
                 className={
                   currentSort == "date"
-                    ? "from-selected/50 to-selected/90 text-selected bg-selected"
-                    : "from-secondary/50 to-secondary/90 text-secondary bg-secondary"
+                    ? "bg-selected from-selected/50 to-selected/90 text-selected"
+                    : "bg-secondary from-secondary/50 to-secondary/90 text-secondary"
                 }
                 id="date"
                 value="date"
@@ -485,12 +619,12 @@ function PlusSortSelector({
                 <div className="size-5" />
               )}
             </div>
-            <div className="w-full flex items-center gap-2">
+            <div className="flex w-full items-center gap-2">
               <RadioGroupItem
                 className={
                   currentSort == "score"
-                    ? "from-selected/50 to-selected/90 text-selected bg-selected"
-                    : "from-secondary/50 to-secondary/90 text-secondary bg-secondary"
+                    ? "bg-selected from-selected/50 to-selected/90 text-selected"
+                    : "bg-secondary from-secondary/50 to-secondary/90 text-secondary"
                 }
                 id="score"
                 value="score"
@@ -519,12 +653,15 @@ function PlusSortSelector({
             </div>
           </RadioGroup>
           <DropdownMenuSeparator />
-          <div className="p-2 flex justify-evenly items-center">
+          <div className="flex items-center justify-evenly p-2">
             <Button
               variant="select"
+              disabled={!currentSort}
               onClick={() => {
-                setSelectedSort(`${currentSort}_${currentDir}`);
-                setOpen(false);
+                if (currentSort) {
+                  setSelectedSort(`${currentSort}_${currentDir}`);
+                  setOpen(false);
+                }
               }}
             >
               Apply

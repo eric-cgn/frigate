@@ -9,6 +9,9 @@ import { DynamicVideoController } from "./DynamicVideoController";
 import HlsVideoPlayer from "../HlsVideoPlayer";
 import { TimeRange } from "@/types/timeline";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
+import { VideoResolutionType } from "@/types/live";
+import axios from "axios";
+import { cn } from "@/lib/utils";
 
 /**
  * Dynamically switches between video playback and scrubbing preview player.
@@ -21,9 +24,13 @@ type DynamicVideoPlayerProps = {
   startTimestamp?: number;
   isScrubbing: boolean;
   hotKeys: boolean;
+  fullscreen: boolean;
   onControllerReady: (controller: DynamicVideoController) => void;
   onTimestampUpdate?: (timestamp: number) => void;
   onClipEnded?: () => void;
+  setFullResolution: React.Dispatch<React.SetStateAction<VideoResolutionType>>;
+  toggleFullscreen: () => void;
+  containerRef?: React.MutableRefObject<HTMLDivElement | null>;
 };
 export default function DynamicVideoPlayer({
   className,
@@ -33,9 +40,13 @@ export default function DynamicVideoPlayer({
   startTimestamp,
   isScrubbing,
   hotKeys,
+  fullscreen,
   onControllerReady,
   onTimestampUpdate,
   onClipEnded,
+  setFullResolution,
+  toggleFullscreen,
+  containerRef,
 }: DynamicVideoPlayerProps) {
   const apiHost = useApiHost();
   const { data: config } = useSWR<FrigateConfig>("config");
@@ -45,6 +56,7 @@ export default function DynamicVideoPlayer({
   const playerRef = useRef<HTMLVideoElement | null>(null);
   const [previewController, setPreviewController] =
     useState<PreviewController | null>(null);
+  const [noRecording, setNoRecording] = useState(false);
   const controller = useMemo(() => {
     if (!config || !playerRef.current || !previewController) {
       return undefined;
@@ -56,6 +68,7 @@ export default function DynamicVideoPlayer({
       previewController,
       (config.cameras[camera]?.detect?.annotation_offset || 0) / 1000,
       isScrubbing ? "scrubbing" : "playback",
+      setNoRecording,
       () => {},
     );
     // we only want to fire once when players are ready
@@ -78,6 +91,7 @@ export default function DynamicVideoPlayer({
   // initial state
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
   const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout>();
   const [source, setSource] = useState(
     `${apiHost}vod/${camera}/start/${timeRange.after}/end/${timeRange.before}/master.m3u8`,
@@ -89,7 +103,15 @@ export default function DynamicVideoPlayer({
     if (!isScrubbing) {
       setLoadingTimeout(setTimeout(() => setIsLoading(true), 1000));
     }
-  }, [isScrubbing]);
+
+    return () => {
+      if (loadingTimeout) {
+        clearTimeout(loadingTimeout);
+      }
+    };
+    // we only want trigger when scrubbing state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera, isScrubbing]);
 
   const onPlayerLoaded = useCallback(() => {
     if (!controller || !startTimestamp) {
@@ -105,19 +127,40 @@ export default function DynamicVideoPlayer({
         return;
       }
 
+      if (isLoading) {
+        setIsLoading(false);
+      }
+
+      if (isBuffering) {
+        setIsBuffering(false);
+      }
+
       onTimestampUpdate(controller.getProgress(time));
     },
-    [controller, onTimestampUpdate, isScrubbing],
+    [controller, onTimestampUpdate, isBuffering, isLoading, isScrubbing],
+  );
+
+  const onUploadFrameToPlus = useCallback(
+    (playTime: number) => {
+      if (!controller) {
+        return;
+      }
+
+      const time = controller.getProgress(playTime);
+      return axios.post(`/${camera}/plus/${time}`);
+    },
+    [camera, controller],
   );
 
   // state of playback player
 
-  const recordingParams = useMemo(() => {
-    return {
+  const recordingParams = useMemo(
+    () => ({
       before: timeRange.before,
       after: timeRange.after,
-    };
-  }, [timeRange]);
+    }),
+    [timeRange],
+  );
   const { data: recordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
     { revalidateOnFocus: false },
@@ -133,12 +176,13 @@ export default function DynamicVideoPlayer({
     }
 
     setSource(
-      `${apiHost}vod/${camera}/start/${timeRange.after}/end/${timeRange.before}/master.m3u8`,
+      `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8`,
     );
     setLoadingTimeout(setTimeout(() => setIsLoading(true), 1000));
 
     controller.newPlayback({
       recordings: recordings ?? [],
+      timeRange,
     });
 
     // we only want this to change when recordings update
@@ -149,9 +193,11 @@ export default function DynamicVideoPlayer({
     <>
       <HlsVideoPlayer
         videoRef={playerRef}
+        containerRef={containerRef}
         visible={!(isScrubbing || isLoading)}
         currentSource={source}
         hotKeys={hotKeys}
+        fullscreen={fullscreen}
         onTimeUpdate={onTimeUpdate}
         onPlayerLoaded={onPlayerLoaded}
         onClipEnded={onClipEnded}
@@ -164,22 +210,38 @@ export default function DynamicVideoPlayer({
             clearTimeout(loadingTimeout);
           }
 
-          setIsLoading(false);
+          setNoRecording(false);
+        }}
+        setFullResolution={setFullResolution}
+        onUploadFrame={onUploadFrameToPlus}
+        toggleFullscreen={toggleFullscreen}
+        onError={(error) => {
+          if (error == "stalled" && !isScrubbing) {
+            setIsBuffering(true);
+          }
         }}
       />
       <PreviewPlayer
-        className={`${isScrubbing || isLoading ? "visible" : "hidden"} ${className}`}
+        className={cn(
+          className,
+          isScrubbing || isLoading ? "visible" : "hidden",
+        )}
         camera={camera}
         timeRange={timeRange}
         cameraPreviews={cameraPreviews}
         startTime={startTimestamp}
         isScrubbing={isScrubbing}
-        onControllerReady={(previewController) => {
-          setPreviewController(previewController);
-        }}
+        onControllerReady={(previewController) =>
+          setPreviewController(previewController)
+        }
       />
-      {isLoading && (
-        <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x1/2 -translate-y-1/2" />
+      {!isScrubbing && (isLoading || isBuffering) && !noRecording && (
+        <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
+      )}
+      {!isScrubbing && !isLoading && noRecording && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          No recordings found for this time
+        </div>
       )}
     </>
   );

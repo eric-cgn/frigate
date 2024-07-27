@@ -1,37 +1,28 @@
+import { IconName } from "@/components/icons/IconPicker";
 import { BsPersonWalking } from "react-icons/bs";
 import {
   FaAmazon,
+  FaBicycle,
+  FaBus,
   FaCarSide,
   FaCat,
   FaCheckCircle,
-  FaCircle,
   FaDog,
   FaFedex,
   FaFire,
-  FaLeaf,
+  FaFootballBall,
+  FaMotorcycle,
+  FaMouse,
   FaUps,
+  FaUsps,
 } from "react-icons/fa";
+import { GiDeer, GiHummingbird, GiPolarBear, GiSailboat } from "react-icons/gi";
 import { LuBox, LuLassoSelect } from "react-icons/lu";
+import * as LuIcons from "react-icons/lu";
 import { MdRecordVoiceOver } from "react-icons/md";
 
-export function getIconTypeForGroup(icon: string) {
-  switch (icon) {
-    case "car":
-      return FaCarSide;
-    case "cat":
-      return FaCat;
-    case "dog":
-      return FaDog;
-    case "leaf":
-      return FaLeaf;
-    default:
-      return FaCircle;
-  }
-}
-
-export function getIconForGroup(icon: string, className: string = "size-4") {
-  const GroupIcon = getIconTypeForGroup(icon);
-  return <GroupIcon className={className} />;
+export function isValidIconName(value: string): value is IconName {
+  return Object.keys(LuIcons).includes(value as IconName);
 }
 
 export function getIconForLabel(label: string, className?: string) {
@@ -40,19 +31,40 @@ export function getIconForLabel(label: string, className?: string) {
   }
 
   switch (label) {
+    // objects
+    case "bear":
+      return <GiPolarBear key={label} className={className} />;
+    case "bicycle":
+      return <FaBicycle key={label} className={className} />;
+    case "bird":
+      return <GiHummingbird key={label} className={className} />;
+    case "boat":
+      return <GiSailboat key={label} className={className} />;
+    case "bus":
+      return <FaBus key={label} className={className} />;
     case "car":
+    case "vehicle":
       return <FaCarSide key={label} className={className} />;
     case "cat":
       return <FaCat key={label} className={className} />;
+    case "deer":
+      return <GiDeer key={label} className={className} />;
+    case "animal":
     case "bark":
     case "dog":
       return <FaDog key={label} className={className} />;
     case "fire_alarm":
       return <FaFire key={label} className={className} />;
+    case "motorcycle":
+      return <FaMotorcycle key={label} className={className} />;
+    case "mouse":
+      return <FaMouse key={label} className={className} />;
     case "package":
       return <LuBox key={label} className={className} />;
     case "person":
       return <BsPersonWalking key={label} className={className} />;
+    case "sports_ball":
+      return <FaFootballBall key={label} className={className} />;
     // audio
     case "crying":
     case "laughter":
@@ -67,6 +79,8 @@ export function getIconForLabel(label: string, className?: string) {
       return <FaFedex key={label} className={className} />;
     case "ups":
       return <FaUps key={label} className={className} />;
+    case "usps":
+      return <FaUsps key={label} className={className} />;
     default:
       return <LuLassoSelect key={label} className={className} />;
   }

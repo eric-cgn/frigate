@@ -4,24 +4,15 @@ import base64
 import glob
 import logging
 import os
-import re
 import subprocess as sp
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 from urllib.parse import unquote
 
 import cv2
 import numpy as np
 import pytz
-from flask import (
-    Blueprint,
-    Response,
-    current_app,
-    jsonify,
-    make_response,
-    request,
-)
+from flask import Blueprint, Response, current_app, jsonify, make_response, request
 from peewee import DoesNotExist, fn
 from tzlocal import get_localzone_name
 from werkzeug.utils import secure_filename
@@ -29,16 +20,13 @@ from werkzeug.utils import secure_filename
 from frigate.const import (
     CACHE_DIR,
     CLIPS_DIR,
-    EXPORT_DIR,
     MAX_SEGMENT_DURATION,
     PREVIEW_FRAME_TYPE,
     RECORD_DIR,
 )
 from frigate.models import Event, Previews, Recordings, Regions, ReviewSegment
-from frigate.record.export import PlaybackFactorEnum, RecordingExporter
-from frigate.util.builtin import (
-    get_tz_modifiers,
-)
+from frigate.util.builtin import get_tz_modifiers
+from frigate.util.image import get_image_from_recording
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +105,7 @@ def latest_frame(camera_name):
         "regions": request.args.get("regions", type=int),
     }
     resize_quality = request.args.get("quality", default=70, type=int)
+    extension = os.path.splitext(request.path)[1][1:]
 
     if camera_name in current_app.frigate_config.cameras:
         frame = current_app.detected_frames_processor.get_current_frame(
@@ -159,10 +148,10 @@ def latest_frame(camera_name):
         frame = cv2.resize(frame, dsize=(width, height), interpolation=cv2.INTER_AREA)
 
         ret, img = cv2.imencode(
-            ".webp", frame, [int(cv2.IMWRITE_WEBP_QUALITY), resize_quality]
+            f".{extension}", frame, [int(cv2.IMWRITE_WEBP_QUALITY), resize_quality]
         )
         response = make_response(img.tobytes())
-        response.headers["Content-Type"] = "image/webp"
+        response.headers["Content-Type"] = f"image/{extension}"
         response.headers["Cache-Control"] = "no-store"
         return response
     elif camera_name == "birdseye" and current_app.frigate_config.birdseye.restream:
@@ -177,10 +166,10 @@ def latest_frame(camera_name):
         frame = cv2.resize(frame, dsize=(width, height), interpolation=cv2.INTER_AREA)
 
         ret, img = cv2.imencode(
-            ".webp", frame, [int(cv2.IMWRITE_WEBP_QUALITY), resize_quality]
+            f".{extension}", frame, [int(cv2.IMWRITE_WEBP_QUALITY), resize_quality]
         )
         response = make_response(img.tobytes())
-        response.headers["Content-Type"] = "image/webp"
+        response.headers["Content-Type"] = f"image/{extension}"
         response.headers["Cache-Control"] = "no-store"
         return response
     else:
@@ -218,32 +207,87 @@ def get_snapshot_from_recording(camera_name: str, frame_time: str):
     try:
         recording: Recordings = recording_query.get()
         time_in_segment = frame_time - recording.start_time
+        image_data = get_image_from_recording(recording.path, time_in_segment)
 
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-ss",
-            f"00:00:{time_in_segment}",
-            "-i",
-            recording.path,
-            "-frames:v",
-            "1",
-            "-c:v",
-            "png",
-            "-f",
-            "image2pipe",
-            "-",
-        ]
+        if not image_data:
+            return make_response(
+                jsonify(
+                    {
+                        "success": False,
+                        "message": f"Unable to parse frame at time {frame_time}",
+                    }
+                ),
+                404,
+            )
 
-        process = sp.run(
-            ffmpeg_cmd,
-            capture_output=True,
-        )
-        response = make_response(process.stdout)
+        response = make_response(image_data)
         response.headers["Content-Type"] = "image/png"
         return response
+    except DoesNotExist:
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": "Recording not found at {}".format(frame_time),
+                }
+            ),
+            404,
+        )
+
+
+@MediaBp.route("/<camera_name>/plus/<frame_time>", methods=("POST",))
+def submit_recording_snapshot_to_plus(camera_name: str, frame_time: str):
+    if camera_name not in current_app.frigate_config.cameras:
+        return make_response(
+            jsonify({"success": False, "message": "Camera not found"}),
+            404,
+        )
+
+    frame_time = float(frame_time)
+    recording_query = (
+        Recordings.select(
+            Recordings.path,
+            Recordings.start_time,
+        )
+        .where(
+            (
+                (frame_time >= Recordings.start_time)
+                & (frame_time <= Recordings.end_time)
+            )
+        )
+        .where(Recordings.camera == camera_name)
+        .order_by(Recordings.start_time.desc())
+        .limit(1)
+    )
+
+    try:
+        recording: Recordings = recording_query.get()
+        time_in_segment = frame_time - recording.start_time
+        image_data = get_image_from_recording(recording.path, time_in_segment)
+
+        if not image_data:
+            return make_response(
+                jsonify(
+                    {
+                        "success": False,
+                        "message": f"Unable to parse frame at time {frame_time}",
+                    }
+                ),
+                404,
+            )
+
+        nd = cv2.imdecode(np.frombuffer(image_data, dtype=np.int8), cv2.IMREAD_COLOR)
+        current_app.plus_api.upload_image(nd, camera_name)
+
+        return make_response(
+            jsonify(
+                {
+                    "success": True,
+                    "message": "Successfully submitted image.",
+                }
+            ),
+            200,
+        )
     except DoesNotExist:
         return make_response(
             jsonify(
@@ -405,8 +449,18 @@ def recording_clip(camera_name, start_ts, end_ts):
         if clip.end_time > end_ts:
             playlist_lines.append(f"outpoint {int(end_ts - clip.start_time)}")
 
-    file_name = secure_filename(f"clip_{camera_name}_{start_ts}-{end_ts}.mp4")
-    path = os.path.join(CACHE_DIR, file_name)
+    file_name = f"clip_{camera_name}_{start_ts}-{end_ts}.mp4"
+
+    if len(file_name) > 1000:
+        return make_response(
+            jsonify(
+                {"success": False, "message": "Filename exceeded max length of 1000"}
+            ),
+            403,
+        )
+
+    file_name = secure_filename(file_name)
+    path = os.path.join(CLIPS_DIR, f"cache/{file_name}")
 
     if not os.path.exists(path):
         ffmpeg_cmd = [
@@ -458,7 +512,7 @@ def recording_clip(camera_name, start_ts, end_ts):
         response.headers["Content-Disposition"] = "attachment; filename=%s" % file_name
     response.headers["Content-Length"] = os.path.getsize(path)
     response.headers["X-Accel-Redirect"] = (
-        f"/cache/{file_name}"  # nginx: https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_ignore_headers
+        f"/clips/cache/{file_name}"  # nginx: https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_ignore_headers
     )
 
     return response
@@ -500,7 +554,9 @@ def vod_ts(camera_name, start_ts, end_ts):
             logger.warning(f"Recording clip is missing or empty: {recording.path}")
 
     if not clips:
-        logger.error("No recordings found for the requested time range")
+        logger.error(
+            f"No recordings found for {camera_name} during the requested time range"
+        )
         return make_response(
             jsonify(
                 {
@@ -583,7 +639,7 @@ def vod_event(id):
         # If the recordings are not found and the event started more than 5 minutes ago, set has_clip to false
         if (
             event.start_time < datetime.now().timestamp() - 300
-            and type(vod_response) == tuple
+            and type(vod_response) is tuple
             and len(vod_response) == 2
             and vod_response[1] == 404
         ):
@@ -598,151 +654,6 @@ def vod_event(id):
             "durations": [duration],
             "sequences": [{"clips": [{"type": "source", "path": clip_path}]}],
         }
-    )
-
-
-@MediaBp.route(
-    "/export/<camera_name>/start/<int:start_time>/end/<int:end_time>", methods=["POST"]
-)
-@MediaBp.route(
-    "/export/<camera_name>/start/<float:start_time>/end/<float:end_time>",
-    methods=["POST"],
-)
-def export_recording(camera_name: str, start_time, end_time):
-    if not camera_name or not current_app.frigate_config.cameras.get(camera_name):
-        return make_response(
-            jsonify(
-                {"success": False, "message": f"{camera_name} is not a valid camera."}
-            ),
-            404,
-        )
-
-    json: dict[str, any] = request.get_json(silent=True) or {}
-    playback_factor = json.get("playback", "realtime")
-    name: Optional[str] = json.get("name")
-
-    recordings_count = (
-        Recordings.select()
-        .where(
-            Recordings.start_time.between(start_time, end_time)
-            | Recordings.end_time.between(start_time, end_time)
-            | ((start_time > Recordings.start_time) & (end_time < Recordings.end_time))
-        )
-        .where(Recordings.camera == camera_name)
-        .count()
-    )
-
-    if recordings_count <= 0:
-        return make_response(
-            jsonify(
-                {"success": False, "message": "No recordings found for time range"}
-            ),
-            400,
-        )
-
-    exporter = RecordingExporter(
-        current_app.frigate_config,
-        camera_name,
-        secure_filename(name.replace(" ", "_")) if name else None,
-        int(start_time),
-        int(end_time),
-        (
-            PlaybackFactorEnum[playback_factor]
-            if playback_factor in PlaybackFactorEnum.__members__.values()
-            else PlaybackFactorEnum.realtime
-        ),
-    )
-    exporter.start()
-    return make_response(
-        jsonify(
-            {
-                "success": True,
-                "message": "Starting export of recording.",
-            }
-        ),
-        200,
-    )
-
-
-def export_filename_check_extension(filename: str):
-    if filename.endswith(".mp4"):
-        return filename
-    else:
-        return filename + ".mp4"
-
-
-def export_filename_is_valid(filename: str):
-    if re.search(r"[^:_A-Za-z0-9]", filename) or filename.startswith("in_progress."):
-        return False
-    else:
-        return True
-
-
-@MediaBp.route("/export/<file_name_current>/<file_name_new>", methods=["PATCH"])
-def export_rename(file_name_current, file_name_new: str):
-    safe_file_name_current = secure_filename(
-        export_filename_check_extension(file_name_current)
-    )
-    file_current = os.path.join(EXPORT_DIR, safe_file_name_current)
-
-    if not os.path.exists(file_current):
-        return make_response(
-            jsonify({"success": False, "message": f"{file_name_current} not found."}),
-            404,
-        )
-
-    if not export_filename_is_valid(file_name_new):
-        return make_response(
-            jsonify(
-                {
-                    "success": False,
-                    "message": f"{file_name_new} contains illegal characters.",
-                }
-            ),
-            400,
-        )
-
-    safe_file_name_new = secure_filename(export_filename_check_extension(file_name_new))
-    file_new = os.path.join(EXPORT_DIR, safe_file_name_new)
-
-    if os.path.exists(file_new):
-        return make_response(
-            jsonify({"success": False, "message": f"{file_name_new} already exists."}),
-            400,
-        )
-
-    os.rename(file_current, file_new)
-    return make_response(
-        jsonify(
-            {
-                "success": True,
-                "message": "Successfully renamed file.",
-            }
-        ),
-        200,
-    )
-
-
-@MediaBp.route("/export/<file_name>", methods=["DELETE"])
-def export_delete(file_name: str):
-    safe_file_name = secure_filename(export_filename_check_extension(file_name))
-    file = os.path.join(EXPORT_DIR, safe_file_name)
-
-    if not os.path.exists(file):
-        return make_response(
-            jsonify({"success": False, "message": f"{file_name} not found."}),
-            404,
-        )
-
-    os.unlink(file)
-    return make_response(
-        jsonify(
-            {
-                "success": True,
-                "message": "Successfully deleted file.",
-            }
-        ),
-        200,
     )
 
 
@@ -1322,8 +1233,169 @@ def preview_gif(camera_name: str, start_ts, end_ts, max_cache_age=2592000):
     return response
 
 
-@MediaBp.route("/review/<id>/preview.gif")
+@MediaBp.route("/<camera_name>/start/<int:start_ts>/end/<int:end_ts>/preview.mp4")
+@MediaBp.route("/<camera_name>/start/<float:start_ts>/end/<float:end_ts>/preview.mp4")
+def preview_mp4(camera_name: str, start_ts, end_ts, max_cache_age=604800):
+    file_name = f"preview_{camera_name}_{start_ts}-{end_ts}.mp4"
+
+    if len(file_name) > 1000:
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": "Filename exceeded max length of 1000 characters.",
+                }
+            ),
+            403,
+        )
+
+    file_name = secure_filename(file_name)
+    path = os.path.join(CACHE_DIR, file_name)
+
+    if datetime.fromtimestamp(start_ts) < datetime.now().replace(minute=0, second=0):
+        # has preview mp4
+        try:
+            preview: Previews = (
+                Previews.select(
+                    Previews.camera,
+                    Previews.path,
+                    Previews.duration,
+                    Previews.start_time,
+                    Previews.end_time,
+                )
+                .where(
+                    Previews.start_time.between(start_ts, end_ts)
+                    | Previews.end_time.between(start_ts, end_ts)
+                    | ((start_ts > Previews.start_time) & (end_ts < Previews.end_time))
+                )
+                .where(Previews.camera == camera_name)
+                .limit(1)
+                .get()
+            )
+        except DoesNotExist:
+            preview = None
+
+        if not preview:
+            return make_response(
+                jsonify({"success": False, "message": "Preview not found"}), 404
+            )
+
+        diff = start_ts - preview.start_time
+        minutes = int(diff / 60)
+        seconds = int(diff % 60)
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-y",
+            "-ss",
+            f"00:{minutes}:{seconds}",
+            "-t",
+            f"{end_ts - start_ts}",
+            "-i",
+            preview.path,
+            "-r",
+            "8",
+            "-vf",
+            "setpts=0.12*PTS",
+            "-c:v",
+            "libx264",
+            "-movflags",
+            "+faststart",
+            path,
+        ]
+
+        process = sp.run(
+            ffmpeg_cmd,
+            capture_output=True,
+        )
+
+        if process.returncode != 0:
+            logger.error(process.stderr)
+            return make_response(
+                jsonify({"success": False, "message": "Unable to create preview gif"}),
+                500,
+            )
+
+    else:
+        # need to generate from existing images
+        preview_dir = os.path.join(CACHE_DIR, "preview_frames")
+        file_start = f"preview_{camera_name}"
+        start_file = f"{file_start}-{start_ts}.{PREVIEW_FRAME_TYPE}"
+        end_file = f"{file_start}-{end_ts}.{PREVIEW_FRAME_TYPE}"
+        selected_previews = []
+
+        for file in sorted(os.listdir(preview_dir)):
+            if not file.startswith(file_start):
+                continue
+
+            if file < start_file:
+                continue
+
+            if file > end_file:
+                break
+
+            selected_previews.append(f"file '{os.path.join(preview_dir, file)}'")
+            selected_previews.append("duration 0.12")
+
+        if not selected_previews:
+            return make_response(
+                jsonify({"success": False, "message": "Preview not found"}), 404
+            )
+
+        last_file = selected_previews[-2]
+        selected_previews.append(last_file)
+
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-f",
+            "concat",
+            "-y",
+            "-protocol_whitelist",
+            "pipe,file",
+            "-safe",
+            "0",
+            "-i",
+            "/dev/stdin",
+            "-c:v",
+            "libx264",
+            "-movflags",
+            "+faststart",
+            path,
+        ]
+
+        process = sp.run(
+            ffmpeg_cmd,
+            input=str.encode("\n".join(selected_previews)),
+            capture_output=True,
+        )
+
+        if process.returncode != 0:
+            logger.error(process.stderr)
+            return make_response(
+                jsonify({"success": False, "message": "Unable to create preview gif"}),
+                500,
+            )
+
+    response = make_response()
+    response.headers["Content-Description"] = "File Transfer"
+    response.headers["Cache-Control"] = f"private, max-age={max_cache_age}"
+    response.headers["Content-Type"] = "video/mp4"
+    response.headers["Content-Length"] = os.path.getsize(path)
+    response.headers["X-Accel-Redirect"] = (
+        f"/cache/{file_name}"  # nginx: https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_ignore_headers
+    )
+    return response
+
+
+@MediaBp.route("/review/<id>/preview")
 def review_preview(id: str):
+    format = request.args.get("format", default="gif")
+
     try:
         review: ReviewSegment = ReviewSegment.get(ReviewSegment.id == id)
     except DoesNotExist:
@@ -1336,13 +1408,25 @@ def review_preview(id: str):
     end_ts = (
         review.end_time + padding if review.end_time else datetime.now().timestamp()
     )
-    return preview_gif(review.camera, start_ts, end_ts)
+
+    if format == "gif":
+        return preview_gif(review.camera, start_ts, end_ts)
+    else:
+        return preview_mp4(review.camera, start_ts, end_ts)
 
 
 @MediaBp.route("/preview/<file_name>/thumbnail.jpg")
 @MediaBp.route("/preview/<file_name>/thumbnail.webp")
 def preview_thumbnail(file_name: str):
     """Get a thumbnail from the cached preview frames."""
+    if len(file_name) > 1000:
+        return make_response(
+            jsonify(
+                {"success": False, "message": "Filename exceeded max length of 1000"}
+            ),
+            403,
+        )
+
     safe_file_name_current = secure_filename(file_name)
     preview_dir = os.path.join(CACHE_DIR, "preview_frames")
 
@@ -1357,6 +1441,6 @@ def preview_thumbnail(file_name: str):
         )
 
     response = make_response(jpg_bytes)
-    response.headers["Content-Type"] = "image/jpeg"
+    response.headers["Content-Type"] = "image/webp"
     response.headers["Cache-Control"] = "private, max-age=31536000"
     return response

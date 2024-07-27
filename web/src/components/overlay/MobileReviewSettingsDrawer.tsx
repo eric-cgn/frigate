@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { Drawer, DrawerContent, DrawerTrigger } from "../ui/drawer";
 import { Button } from "../ui/button";
 import { FaArrowDown, FaCalendarAlt, FaCog, FaFilter } from "react-icons/fa";
@@ -7,11 +7,9 @@ import { ExportContent } from "./ExportDialog";
 import { ExportMode } from "@/types/filter";
 import ReviewActivityCalendar from "./ReviewActivityCalendar";
 import { SelectSeparator } from "../ui/select";
-import { ReviewFilter, ReviewSummary } from "@/types/review";
+import { ReviewFilter, ReviewSeverity, ReviewSummary } from "@/types/review";
 import { getEndOfDayTimestamp } from "@/utils/dateUtil";
 import { GeneralFilterContent } from "../filter/ReviewFilterGroup";
-import useSWR from "swr";
-import { FrigateConfig } from "@/types/frigateConfig";
 import { toast } from "sonner";
 import axios from "axios";
 import SaveExportOverlay from "./SaveExportOverlay";
@@ -31,11 +29,14 @@ type MobileReviewSettingsDrawerProps = {
   features?: DrawerFeatures[];
   camera: string;
   filter?: ReviewFilter;
+  currentSeverity?: ReviewSeverity;
   latestTime: number;
   currentTime: number;
   range?: TimeRange;
   mode: ExportMode;
   reviewSummary?: ReviewSummary;
+  allLabels: string[];
+  allZones: string[];
   onUpdateFilter: (filter: ReviewFilter) => void;
   setRange: (range: TimeRange | undefined) => void;
   setMode: (mode: ExportMode) => void;
@@ -44,16 +45,18 @@ export default function MobileReviewSettingsDrawer({
   features = DEFAULT_DRAWER_FEATURES,
   camera,
   filter,
+  currentSeverity,
   latestTime,
   currentTime,
   range,
   mode,
   reviewSummary,
+  allLabels,
+  allZones,
   onUpdateFilter,
   setRange,
   setMode,
 }: MobileReviewSettingsDrawerProps) {
-  const { data: config } = useSWR<FrigateConfig>("config");
   const [drawerMode, setDrawerMode] = useState<DrawerMode>("none");
 
   // exports
@@ -62,6 +65,13 @@ export default function MobileReviewSettingsDrawer({
   const onStartExport = useCallback(() => {
     if (!range) {
       toast.error("No valid time range selected", { position: "top-center" });
+      return;
+    }
+
+    if (range.before < range.after) {
+      toast.error("End time must be after start time", {
+        position: "top-center",
+      });
       return;
     }
 
@@ -100,31 +110,11 @@ export default function MobileReviewSettingsDrawer({
 
   // filters
 
-  const allLabels = useMemo<string[]>(() => {
-    if (!config) {
-      return [];
-    }
-
-    const labels = new Set<string>();
-    const cameras = filter?.cameras || Object.keys(config.cameras);
-
-    cameras.forEach((camera) => {
-      const cameraConfig = config.cameras[camera];
-      cameraConfig.objects.track.forEach((label) => {
-        labels.add(label);
-      });
-
-      if (cameraConfig.audio.enabled_in_config) {
-        cameraConfig.audio.listen.forEach((label) => {
-          labels.add(label);
-        });
-      }
-    });
-
-    return [...labels].sort();
-  }, [config, filter]);
   const [currentLabels, setCurrentLabels] = useState<string[] | undefined>(
     filter?.labels,
+  );
+  const [currentZones, setCurrentZones] = useState<string[] | undefined>(
+    filter?.zones,
   );
 
   if (!isMobile) {
@@ -134,19 +124,22 @@ export default function MobileReviewSettingsDrawer({
   let content;
   if (drawerMode == "select") {
     content = (
-      <div className="w-full p-4 flex flex-col gap-2">
+      <div className="flex w-full flex-col gap-2 p-4">
         {features.includes("export") && (
           <Button
-            className="w-full flex justify-center items-center gap-2"
-            onClick={() => setDrawerMode("export")}
+            className="flex w-full items-center justify-center gap-2"
+            onClick={() => {
+              setDrawerMode("export");
+              setMode("select");
+            }}
           >
-            <FaArrowDown className="p-1 fill-secondary bg-secondary-foreground rounded-md" />
+            <FaArrowDown className="rounded-md bg-secondary-foreground fill-secondary p-1" />
             Export
           </Button>
         )}
         {features.includes("calendar") && (
           <Button
-            className="w-full flex justify-center items-center gap-2"
+            className="flex w-full items-center justify-center gap-2"
             variant={filter?.after ? "select" : "default"}
             onClick={() => setDrawerMode("calendar")}
           >
@@ -158,12 +151,12 @@ export default function MobileReviewSettingsDrawer({
         )}
         {features.includes("filter") && (
           <Button
-            className="w-full flex justify-center items-center gap-2"
-            variant={filter?.labels ? "select" : "default"}
+            className="flex w-full items-center justify-center gap-2"
+            variant={filter?.labels || filter?.zones ? "select" : "default"}
             onClick={() => setDrawerMode("filter")}
           >
             <FaFilter
-              className={`${filter?.labels ? "text-selected-foreground" : "text-secondary-foreground"}`}
+              className={`${filter?.labels || filter?.zones ? "text-selected-foreground" : "text-secondary-foreground"}`}
             />
             Filter
           </Button>
@@ -196,8 +189,8 @@ export default function MobileReviewSettingsDrawer({
     );
   } else if (drawerMode == "calendar") {
     content = (
-      <div className="w-full flex flex-col">
-        <div className="w-full h-8 relative">
+      <div className="flex w-full flex-col">
+        <div className="relative h-8 w-full">
           <div
             className="absolute left-0 text-selected"
             onClick={() => setDrawerMode("select")}
@@ -224,7 +217,7 @@ export default function MobileReviewSettingsDrawer({
           }}
         />
         <SelectSeparator />
-        <div className="p-2 flex justify-center items-center">
+        <div className="flex items-center justify-center p-2">
           <Button
             onClick={() => {
               onUpdateFilter({
@@ -241,8 +234,8 @@ export default function MobileReviewSettingsDrawer({
     );
   } else if (drawerMode == "filter") {
     content = (
-      <div className="w-full h-auto overflow-y-auto flex flex-col">
-        <div className="w-full h-8 mb-2 relative">
+      <div className="scrollbar-container flex h-auto w-full flex-col overflow-y-auto overflow-x-hidden">
+        <div className="relative mb-2 h-8 w-full">
           <div
             className="absolute left-0 text-selected"
             onClick={() => setDrawerMode("select")}
@@ -257,6 +250,18 @@ export default function MobileReviewSettingsDrawer({
           allLabels={allLabels}
           selectedLabels={filter?.labels}
           currentLabels={currentLabels}
+          currentSeverity={currentSeverity}
+          showAll={filter?.showAll == true}
+          allZones={allZones}
+          selectedZones={filter?.zones}
+          currentZones={currentZones}
+          setCurrentZones={setCurrentZones}
+          updateZoneFilter={(newZones) =>
+            onUpdateFilter({ ...filter, zones: newZones })
+          }
+          setShowAll={(showAll) => {
+            onUpdateFilter({ ...filter, showAll });
+          }}
           setCurrentLabels={setCurrentLabels}
           updateLabelFilter={(newLabels) =>
             onUpdateFilter({ ...filter, labels: newLabels })
@@ -270,7 +275,7 @@ export default function MobileReviewSettingsDrawer({
   return (
     <>
       <SaveExportOverlay
-        className="absolute top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+        className="pointer-events-none absolute left-1/2 top-8 z-50 -translate-x-1/2"
         show={mode == "timeline"}
         onSave={() => onStartExport()}
         onCancel={() => setMode("none")}
@@ -286,16 +291,20 @@ export default function MobileReviewSettingsDrawer({
         <DrawerTrigger asChild>
           <Button
             className="rounded-lg capitalize"
-            variant={filter?.labels || filter?.after ? "select" : "default"}
+            variant={
+              filter?.labels || filter?.after || filter?.zones
+                ? "select"
+                : "default"
+            }
             size="sm"
             onClick={() => setDrawerMode("select")}
           >
             <FaCog
-              className={`${filter?.labels || filter?.after ? "text-selected-foreground" : "text-secondary-foreground"}`}
+              className={`${filter?.labels || filter?.after || filter?.zones ? "text-selected-foreground" : "text-secondary-foreground"}`}
             />
           </Button>
         </DrawerTrigger>
-        <DrawerContent className="max-h-[80dvh] overflow-hidden flex flex-col items-center gap-2 px-4 pb-4 mx-1 rounded-t-2xl">
+        <DrawerContent className="mx-1 flex max-h-[80dvh] flex-col items-center gap-2 overflow-hidden rounded-t-2xl px-4 pb-4">
           {content}
         </DrawerContent>
       </Drawer>

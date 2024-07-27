@@ -63,6 +63,13 @@ export default function ExportDialog({
       return;
     }
 
+    if (range.before < range.after) {
+      toast.error("End time must be after start time", {
+        position: "top-center",
+      });
+      return;
+    }
+
     axios
       .post(
         `export/${camera}/start/${Math.round(range.after)}/end/${Math.round(range.before)}`,
@@ -103,7 +110,7 @@ export default function ExportDialog({
   return (
     <>
       <SaveExportOverlay
-        className="absolute top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+        className="pointer-events-none absolute left-1/2 top-8 z-50 -translate-x-1/2"
         show={mode == "timeline"}
         onSave={() => onStartExport()}
         onCancel={() => setMode("none")}
@@ -121,16 +128,26 @@ export default function ExportDialog({
             className="flex items-center gap-2"
             size="sm"
             onClick={() => {
+              const now = new Date(latestTime * 1000);
+              let start = 0;
+              now.setHours(now.getHours() - 1);
+              start = now.getTime() / 1000;
+              setRange({
+                before: latestTime,
+                after: start,
+              });
               setMode("select");
             }}
           >
-            <FaArrowDown className="p-1 fill-secondary bg-secondary-foreground rounded-md" />
+            <FaArrowDown className="rounded-md bg-secondary-foreground fill-secondary p-1" />
             {isDesktop && <div className="text-primary">Export</div>}
           </Button>
         </Trigger>
         <Content
           className={
-            isDesktop ? "sm:rounded-2xl" : "px-4 pb-4 mx-4 rounded-2xl"
+            isDesktop
+              ? "sm:rounded-lg md:rounded-2xl"
+              : "mx-4 rounded-lg px-4 pb-4 md:rounded-2xl"
           }
         >
           <ExportContent
@@ -231,8 +248,8 @@ export function ExportContent({
               <RadioGroupItem
                 className={
                   opt == selectedOption
-                    ? "from-selected/50 to-selected/90 text-selected bg-selected"
-                    : "from-secondary/50 to-secondary/90 text-secondary bg-secondary"
+                    ? "bg-selected from-selected/50 to-selected/90 text-selected"
+                    : "bg-secondary from-secondary/50 to-secondary/90 text-secondary"
                 }
                 id={opt}
                 value={opt}
@@ -267,7 +284,7 @@ export function ExportContent({
         className={isDesktop ? "" : "mt-3 flex flex-col-reverse gap-4"}
       >
         <div
-          className={`p-2 cursor-pointer text-center ${isDesktop ? "" : "w-full"}`}
+          className={`cursor-pointer p-2 text-center ${isDesktop ? "" : "w-full"}`}
           onClick={onCancel}
         >
           Cancel
@@ -373,7 +390,7 @@ function CustomTimeSelector({
 
   return (
     <div
-      className={`mt-3 flex items-center bg-secondary text-secondary-foreground rounded-lg ${isDesktop ? "mx-8 px-2 gap-2" : "pl-2"}`}
+      className={`mt-3 flex items-center rounded-lg bg-secondary text-secondary-foreground ${isDesktop ? "mx-8 gap-2 px-2" : "pl-2"}`}
     >
       <FaCalendarAlt />
       <Popover
@@ -414,7 +431,7 @@ function CustomTimeSelector({
           />
           <SelectSeparator className="bg-secondary" />
           <input
-            className="w-full mx-4 p-1 border border-input bg-background text-secondary-foreground hover:bg-accent hover:text-accent-foreground dark:[color-scheme:dark]"
+            className="mx-4 w-full border border-input bg-background p-1 text-secondary-foreground hover:bg-accent hover:text-accent-foreground dark:[color-scheme:dark]"
             id="startTime"
             type="time"
             value={startClock}
@@ -476,7 +493,7 @@ function CustomTimeSelector({
           />
           <SelectSeparator className="bg-secondary" />
           <input
-            className="w-full mx-4 p-1 border border-input bg-background text-secondary-foreground hover:bg-accent hover:text-accent-foreground dark:[color-scheme:dark]"
+            className="mx-4 w-full border border-input bg-background p-1 text-secondary-foreground hover:bg-accent hover:text-accent-foreground dark:[color-scheme:dark]"
             id="startTime"
             type="time"
             value={endClock}

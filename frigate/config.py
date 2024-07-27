@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -8,7 +7,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 from pydantic import (
     BaseModel,
@@ -27,6 +25,7 @@ from frigate.const import (
     CACHE_DIR,
     CACHE_SEGMENT_FORMAT,
     DEFAULT_DB_PATH,
+    FREQUENCY_STATS_POINTS,
     MAX_PRE_CAPTURE,
     REGEX_CAMERA_NAME,
     YAML_EXT,
@@ -43,11 +42,13 @@ from frigate.plus import PlusApi
 from frigate.util.builtin import (
     deep_merge,
     escape_special_characters,
+    generate_color_palette,
     get_ffmpeg_arg_list,
     load_config_with_no_duplicates,
 )
+from frigate.util.config import StreamInfoRetriever, get_relative_coordinates
 from frigate.util.image import create_mask
-from frigate.util.services import auto_detect_hwaccel, get_video_properties
+from frigate.util.services import auto_detect_hwaccel
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,9 @@ FRIGATE_ENV_VARS = {k: v for k, v in os.environ.items() if k.startswith("FRIGATE
 if os.path.isdir("/run/secrets") and os.access("/run/secrets", os.R_OK):
     for secret_file in os.listdir("/run/secrets"):
         if secret_file.startswith("FRIGATE_"):
-            FRIGATE_ENV_VARS[secret_file] = Path(
-                os.path.join("/run/secrets", secret_file)
-            ).read_text()
+            FRIGATE_ENV_VARS[secret_file] = (
+                Path(os.path.join("/run/secrets", secret_file)).read_text().strip()
+            )
 
 DEFAULT_TRACKED_OBJECTS = ["person"]
 DEFAULT_ALERT_OBJECTS = ["person", "car"]
@@ -71,6 +72,9 @@ DEFAULT_LISTEN_AUDIO = ["bark", "fire_alarm", "scream", "speech", "yell"]
 DEFAULT_DETECTORS = {"cpu": {"type": "cpu"}}
 DEFAULT_DETECT_DIMENSIONS = {"width": 1280, "height": 720}
 DEFAULT_TIME_LAPSE_FFMPEG_ARGS = "-vf setpts=0.04*PTS -r 30"
+
+# stream info handler
+stream_info_retriever = StreamInfoRetriever()
 
 
 class FrigateBaseModel(BaseModel):
@@ -97,11 +101,7 @@ class DateTimeStyleEnum(str, Enum):
 
 
 class UIConfig(FrigateBaseModel):
-    live_mode: LiveModeEnum = Field(
-        default=LiveModeEnum.mse, title="Default Live Mode."
-    )
     timezone: Optional[str] = Field(default=None, title="Override UI timezone.")
-    use_experimental: bool = Field(default=False, title="Experimental UI")
     time_format: TimeFormatEnum = Field(
         default=TimeFormatEnum.browser, title="Override UI time format."
     )
@@ -114,6 +114,59 @@ class UIConfig(FrigateBaseModel):
     strftime_fmt: Optional[str] = Field(
         default=None, title="Override date and time format using strftime syntax."
     )
+
+
+class TlsConfig(FrigateBaseModel):
+    enabled: bool = Field(default=True, title="Enable TLS for port 8971")
+
+
+class HeaderMappingConfig(FrigateBaseModel):
+    user: str = Field(
+        default=None, title="Header name from upstream proxy to identify user."
+    )
+
+
+class ProxyConfig(FrigateBaseModel):
+    header_map: HeaderMappingConfig = Field(
+        default_factory=HeaderMappingConfig,
+        title="Header mapping definitions for proxy user passing.",
+    )
+    logout_url: Optional[str] = Field(
+        default=None, title="Redirect url for logging out with proxy."
+    )
+    auth_secret: Optional[str] = Field(
+        default=None,
+        title="Secret value for proxy authentication.",
+    )
+
+
+class AuthConfig(FrigateBaseModel):
+    enabled: bool = Field(default=True, title="Enable authentication")
+    reset_admin_password: bool = Field(
+        default=False, title="Reset the admin password on startup"
+    )
+    cookie_name: str = Field(
+        default="frigate_token", title="Name for jwt token cookie", pattern=r"^[a-z]_*$"
+    )
+    cookie_secure: bool = Field(default=False, title="Set secure flag on cookie")
+    session_length: int = Field(
+        default=86400, title="Session length for jwt session tokens", ge=60
+    )
+    refresh_time: int = Field(
+        default=43200,
+        title="Refresh the session if it is going to expire in this many seconds",
+        ge=30,
+    )
+    failed_login_rate_limit: Optional[str] = Field(
+        default=None,
+        title="Rate limits for failed login attempts.",
+    )
+    trusted_proxies: List[str] = Field(
+        default=[],
+        title="Trusted proxies for determining IP address to rate limit",
+    )
+    # As of Feb 2023, OWASP recommends 600000 iterations for PBKDF2-SHA256
+    hash_iterations: int = Field(default=600000, title="Password hash iterations")
 
 
 class StatsConfig(FrigateBaseModel):
@@ -141,7 +194,9 @@ class MqttConfig(FrigateBaseModel):
     port: int = Field(default=1883, title="MQTT Port")
     topic_prefix: str = Field(default="frigate", title="MQTT Topic Prefix")
     client_id: str = Field(default="frigate", title="MQTT Client ID")
-    stats_interval: int = Field(default=60, title="MQTT Camera Stats Interval")
+    stats_interval: int = Field(
+        default=60, ge=FREQUENCY_STATS_POINTS, title="MQTT Camera Stats Interval"
+    )
     user: Optional[str] = Field(None, title="MQTT Username")
     password: Optional[str] = Field(None, title="MQTT Password", validate_default=True)
     tls_ca_certs: Optional[str] = Field(None, title="MQTT TLS CA Certificates")
@@ -223,6 +278,10 @@ class OnvifConfig(FrigateBaseModel):
     autotracking: PtzAutotrackConfig = Field(
         default_factory=PtzAutotrackConfig,
         title="PTZ auto tracking config.",
+    )
+    ignore_time_mismatch: bool = Field(
+        default=False,
+        title="Onvif Ignore Time Synchronization Mismatch Between Camera and Server",
     )
 
 
@@ -349,35 +408,7 @@ class RuntimeMotionConfig(MotionConfig):
     def __init__(self, **config):
         frame_shape = config.get("frame_shape", (1, 1))
 
-        mask = config.get("mask", "")
-
-        # masks and zones are saved as relative coordinates
-        # we know if any points are > 1 then it is using the
-        # old native resolution coordinates
-        if mask:
-            if isinstance(mask, list) and any(x > "1.0" for x in mask[0].split(",")):
-                relative_masks = []
-                for m in mask:
-                    points = m.split(",")
-                    relative_masks.append(
-                        ",".join(
-                            [
-                                f"{round(int(points[i]) / frame_shape[1], 3)},{round(int(points[i + 1]) / frame_shape[0], 3)}"
-                                for i in range(0, len(points), 2)
-                            ]
-                        )
-                    )
-
-                mask = relative_masks
-            elif isinstance(mask, str) and any(x > "1.0" for x in mask.split(",")):
-                points = mask.split(",")
-                mask = ",".join(
-                    [
-                        f"{round(int(points[i]) / frame_shape[1], 3)},{round(int(points[i + 1]) / frame_shape[0], 3)}"
-                        for i in range(0, len(points), 2)
-                    ]
-                )
-
+        mask = get_relative_coordinates(config.get("mask", ""), frame_shape)
         config["raw_mask"] = mask
 
         if mask:
@@ -509,34 +540,7 @@ class RuntimeFilterConfig(FilterConfig):
 
     def __init__(self, **config):
         frame_shape = config.get("frame_shape", (1, 1))
-        mask = config.get("mask")
-
-        # masks and zones are saved as relative coordinates
-        # we know if any points are > 1 then it is using the
-        # old native resolution coordinates
-        if mask:
-            if isinstance(mask, list) and any(x > "1.0" for x in mask[0].split(",")):
-                relative_masks = []
-                for m in mask:
-                    points = m.split(",")
-                    relative_masks.append(
-                        ",".join(
-                            [
-                                f"{round(int(points[i]) / frame_shape[1], 3)},{round(int(points[i + 1]) / frame_shape[0], 3)}"
-                                for i in range(0, len(points), 2)
-                            ]
-                        )
-                    )
-
-                mask = relative_masks
-            elif isinstance(mask, str) and any(x > "1.0" for x in mask.split(",")):
-                points = mask.split(",")
-                mask = ",".join(
-                    [
-                        f"{round(int(points[i]) / frame_shape[1], 3)},{round(int(points[i + 1]) / frame_shape[0], 3)}"
-                        for i in range(0, len(points), 2)
-                    ]
-                )
+        mask = get_relative_coordinates(config.get("mask"), frame_shape)
 
         config["raw_mask"] = mask
 
@@ -573,7 +577,7 @@ class ZoneConfig(BaseModel):
         ge=0,
         title="Number of seconds that an object must loiter to be considered in the zone.",
     )
-    objects: List[str] = Field(
+    objects: Union[str, List[str]] = Field(
         default_factory=list,
         title="List of objects that can trigger the zone.",
     )
@@ -587,6 +591,14 @@ class ZoneConfig(BaseModel):
     @property
     def contour(self) -> np.ndarray:
         return self._contour
+
+    @field_validator("objects", mode="before")
+    @classmethod
+    def validate_objects(cls, v):
+        if isinstance(v, str) and "," not in v:
+            return [v]
+
+        return v
 
     def __init__(self, **config):
         super().__init__(**config)
@@ -602,19 +614,24 @@ class ZoneConfig(BaseModel):
         # old native resolution coordinates
         if isinstance(coordinates, list):
             explicit = any(p.split(",")[0] > "1.0" for p in coordinates)
-            self._contour = np.array(
-                [
-                    (
-                        [int(p.split(",")[0]), int(p.split(",")[1])]
-                        if explicit
-                        else [
-                            int(float(p.split(",")[0]) * frame_shape[1]),
-                            int(float(p.split(",")[1]) * frame_shape[0]),
-                        ]
-                    )
-                    for p in coordinates
-                ]
-            )
+            try:
+                self._contour = np.array(
+                    [
+                        (
+                            [int(p.split(",")[0]), int(p.split(",")[1])]
+                            if explicit
+                            else [
+                                int(float(p.split(",")[0]) * frame_shape[1]),
+                                int(float(p.split(",")[1]) * frame_shape[0]),
+                            ]
+                        )
+                        for p in coordinates
+                    ]
+                )
+            except ValueError:
+                raise ValueError(
+                    f"Invalid coordinates found in configuration file. Coordinates must be relative (between 0-1): {coordinates}"
+                )
 
             if explicit:
                 self.coordinates = ",".join(
@@ -626,19 +643,24 @@ class ZoneConfig(BaseModel):
         elif isinstance(coordinates, str):
             points = coordinates.split(",")
             explicit = any(p > "1.0" for p in points)
-            self._contour = np.array(
-                [
-                    (
-                        [int(points[i]), int(points[i + 1])]
-                        if explicit
-                        else [
-                            int(float(points[i]) * frame_shape[1]),
-                            int(float(points[i + 1]) * frame_shape[0]),
-                        ]
-                    )
-                    for i in range(0, len(points), 2)
-                ]
-            )
+            try:
+                self._contour = np.array(
+                    [
+                        (
+                            [int(points[i]), int(points[i + 1])]
+                            if explicit
+                            else [
+                                int(float(points[i]) * frame_shape[1]),
+                                int(float(points[i + 1]) * frame_shape[0]),
+                            ]
+                        )
+                        for i in range(0, len(points), 2)
+                    ]
+                )
+            except ValueError:
+                raise ValueError(
+                    f"Invalid coordinates found in configuration file. Coordinates must be relative (between 0-1): {coordinates}"
+                )
 
             if explicit:
                 self.coordinates = ",".join(
@@ -663,10 +685,18 @@ class AlertsConfig(FrigateBaseModel):
     labels: List[str] = Field(
         default=DEFAULT_ALERT_OBJECTS, title="Labels to create alerts for."
     )
-    required_zones: List[str] = Field(
+    required_zones: Union[str, List[str]] = Field(
         default_factory=list,
         title="List of required zones to be entered in order to save the event as an alert.",
     )
+
+    @field_validator("required_zones", mode="before")
+    @classmethod
+    def validate_required_zones(cls, v):
+        if isinstance(v, str) and "," not in v:
+            return [v]
+
+        return v
 
 
 class DetectionsConfig(FrigateBaseModel):
@@ -675,10 +705,18 @@ class DetectionsConfig(FrigateBaseModel):
     labels: Optional[List[str]] = Field(
         default=None, title="Labels to create detections for."
     )
-    required_zones: List[str] = Field(
+    required_zones: Union[str, List[str]] = Field(
         default_factory=list,
         title="List of required zones to be entered in order to save the event as a detection.",
     )
+
+    @field_validator("required_zones", mode="before")
+    @classmethod
+    def validate_required_zones(cls, v):
+        if isinstance(v, str) and "," not in v:
+            return [v]
+
+        return v
 
 
 class ReviewConfig(FrigateBaseModel):
@@ -999,10 +1037,11 @@ class CameraConfig(FrigateBaseModel):
     def __init__(self, **config):
         # Set zone colors
         if "zones" in config:
-            colors = plt.cm.get_cmap("tab10", len(config["zones"]))
+            colors = generate_color_palette(len(config["zones"]))
+
             config["zones"] = {
-                name: {**z, "color": tuple(round(255 * c) for c in colors(idx)[:3])}
-                for idx, (name, z) in enumerate(config["zones"].items())
+                name: {**z, "color": color}
+                for (name, z), color in zip(config["zones"].items(), colors)
             }
 
         # add roles to the input if there is only one
@@ -1143,11 +1182,19 @@ class LoggerConfig(FrigateBaseModel):
 class CameraGroupConfig(FrigateBaseModel):
     """Represents a group of cameras."""
 
-    cameras: list[str] = Field(
+    cameras: Union[str, List[str]] = Field(
         default_factory=list, title="List of cameras in this group."
     )
     icon: str = Field(default="generic", title="Icon that represents camera group.")
     order: int = Field(default=0, title="Sort order for group.")
+
+    @field_validator("cameras", mode="before")
+    @classmethod
+    def validate_cameras(cls, v):
+        if isinstance(v, str) and "," not in v:
+            return [v]
+
+        return v
 
 
 def verify_config_roles(camera_config: CameraConfig) -> None:
@@ -1232,6 +1279,20 @@ def verify_zone_objects_are_tracked(camera_config: CameraConfig) -> None:
                 )
 
 
+def verify_required_zones_exist(camera_config: CameraConfig) -> None:
+    for det_zone in camera_config.review.detections.required_zones:
+        if det_zone not in camera_config.zones.keys():
+            raise ValueError(
+                f"Camera {camera_config.name} has a required zone for detections {det_zone} that is not defined."
+            )
+
+    for det_zone in camera_config.review.alerts.required_zones:
+        if det_zone not in camera_config.zones.keys():
+            raise ValueError(
+                f"Camera {camera_config.name} has a required zone for alerts {det_zone} that is not defined."
+            )
+
+
 def verify_autotrack_zones(camera_config: CameraConfig) -> ValueError | None:
     """Verify that required_zones are specified when autotracking is enabled."""
     if (
@@ -1252,10 +1313,15 @@ def verify_motion_and_detect(camera_config: CameraConfig) -> ValueError | None:
 
 
 class FrigateConfig(FrigateBaseModel):
-    mqtt: MqttConfig = Field(title="MQTT Configuration.")
+    mqtt: MqttConfig = Field(title="MQTT configuration.")
     database: DatabaseConfig = Field(
         default_factory=DatabaseConfig, title="Database configuration."
     )
+    tls: TlsConfig = Field(default_factory=TlsConfig, title="TLS configuration.")
+    proxy: ProxyConfig = Field(
+        default_factory=ProxyConfig, title="Proxy configuration."
+    )
+    auth: AuthConfig = Field(default_factory=AuthConfig, title="Auth configuration.")
     environment_vars: Dict[str, str] = Field(
         default_factory=dict, title="Frigate environment variables."
     )
@@ -1314,10 +1380,17 @@ class FrigateConfig(FrigateBaseModel):
         default_factory=TimestampStyleConfig,
         title="Global timestamp style configuration.",
     )
+    version: Optional[float] = Field(default=None, title="Current config version.")
 
     def runtime_config(self, plus_api: PlusApi = None) -> FrigateConfig:
         """Merge camera config with globals."""
         config = self.model_copy(deep=True)
+
+        # Proxy secret substitution
+        if config.proxy.auth_secret:
+            config.proxy.auth_secret = config.proxy.auth_secret.format(
+                **FRIGATE_ENV_VARS
+            )
 
         # MQTT user/password substitutions
         if config.mqtt.user or config.mqtt.password:
@@ -1374,7 +1447,7 @@ class FrigateConfig(FrigateBaseModel):
                 if need_detect_dimensions or need_record_fourcc:
                     stream_info = {"width": 0, "height": 0, "fourcc": None}
                     try:
-                        stream_info = asyncio.run(get_video_properties(input.path))
+                        stream_info = stream_info_retriever.get_stream_info(input.path)
                     except Exception:
                         logger.warn(
                             f"Error detecting stream parameters automatically for {input.path} Applying default values."
@@ -1400,6 +1473,12 @@ class FrigateConfig(FrigateBaseModel):
                         if stream_info.get("hevc")
                         else False
                     )
+
+            # Warn if detect fps > 10
+            if camera_config.detect.fps > 10:
+                logger.warning(
+                    f"{camera_config.name} detect fps is set to {camera_config.detect.fps}. This does NOT need to match your camera's frame rate. High values could lead to reduced performance. Recommended value is 5."
+                )
 
             # Default min_initialized configuration
             min_initialized = int(camera_config.detect.fps / 2)
@@ -1457,9 +1536,15 @@ class FrigateConfig(FrigateBaseModel):
                             else [filter.mask]
                         )
                     object_mask = (
-                        camera_config.objects.mask
-                        if isinstance(camera_config.objects.mask, list)
-                        else [camera_config.objects.mask]
+                        get_relative_coordinates(
+                            (
+                                camera_config.objects.mask
+                                if isinstance(camera_config.objects.mask, list)
+                                else [camera_config.objects.mask]
+                            ),
+                            camera_config.frame_shape,
+                        )
+                        or []
                     )
                     filter.mask = filter_mask + object_mask
 
@@ -1496,6 +1581,7 @@ class FrigateConfig(FrigateBaseModel):
             verify_recording_retention(camera_config)
             verify_recording_segments_setup_with_reasonable_time(camera_config)
             verify_zone_objects_are_tracked(camera_config)
+            verify_required_zones_exist(camera_config)
             verify_autotrack_zones(camera_config)
             verify_motion_and_detect(camera_config)
 
@@ -1515,29 +1601,26 @@ class FrigateConfig(FrigateBaseModel):
         for key, detector in config.detectors.items():
             adapter = TypeAdapter(DetectorConfig)
             model_dict = (
-                detector if isinstance(detector, dict) else detector.model_dump()
+                detector
+                if isinstance(detector, dict)
+                else detector.model_dump(warnings="none")
             )
             detector_config: DetectorConfig = adapter.validate_python(model_dict)
             if detector_config.model is None:
-                detector_config.model = config.model
+                detector_config.model = config.model.model_copy()
             else:
-                model = detector_config.model
-                schema = ModelConfig.model_json_schema()["properties"]
-                if (
-                    model.width != schema["width"]["default"]
-                    or model.height != schema["height"]["default"]
-                    or model.labelmap_path is not None
-                    or model.labelmap
-                    or model.input_tensor != schema["input_tensor"]["default"]
-                    or model.input_pixel_format
-                    != schema["input_pixel_format"]["default"]
-                ):
+                path = detector_config.model.path
+                detector_config.model = config.model.model_copy()
+                detector_config.model.path = path
+
+                if "path" not in model_dict or len(model_dict.keys()) > 1:
                     logger.warning(
                         "Customizing more than a detector model path is unsupported."
                     )
+
             merged_model = deep_merge(
-                detector_config.model.model_dump(exclude_unset=True),
-                config.model.model_dump(exclude_unset=True),
+                detector_config.model.model_dump(exclude_unset=True, warnings="none"),
+                config.model.model_dump(exclude_unset=True, warnings="none"),
             )
 
             if "path" not in merged_model:

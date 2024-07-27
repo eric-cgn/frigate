@@ -63,6 +63,59 @@ database:
   # The path to store the SQLite DB (default: shown below)
   path: /config/frigate.db
 
+# Optional: TLS configuration
+tls:
+  # Optional: Enable TLS for port 8971 (default: shown below)
+  enabled: True
+
+# Optional: Proxy configuration
+proxy:
+  # Optional: Mapping for headers from upstream proxies. Only used if Frigate's auth
+  # is disabled.
+  # NOTE: Many authentication proxies pass a header downstream with the authenticated
+  #       user name. Not all values are supported. It must be a whitelisted header.
+  #       See the docs for more info.
+  header_map:
+    user: x-forwarded-user
+  # Optional: Url for logging out a user. This sets the location of the logout url in
+  # the UI.
+  logout_url: /api/logout
+  # Optional: Auth secret that is checked against the X-Proxy-Secret header sent from
+  # the proxy. If not set, all requests are trusted regardless of origin.
+  auth_secret: None
+
+# Optional: Authentication configuration
+auth:
+  # Optional: Enable authentication
+  enabled: True
+  # Optional: Reset the admin user password on startup (default: shown below)
+  # New password is printed in the logs
+  reset_admin_password: False
+  # Optional: Cookie to store the JWT token for native auth (default: shown below)
+  cookie_name: frigate_token
+  # Optional: Set secure flag on cookie. (default: shown below)
+  # NOTE: This should be set to True if you are using TLS
+  cookie_secure: False
+  # Optional: Session length in seconds (default: shown below)
+  session_length: 86400 # 24 hours
+  # Optional: Refresh time in seconds (default: shown below)
+  # When the session is going to expire in less time than this setting,
+  # it will be refreshed back to the session_length.
+  refresh_time: 43200 # 12 hours
+  # Optional: Rate limiting for login failures to help prevent brute force
+  # login attacks (default: shown below)
+  # See the docs for more information on valid values
+  failed_login_rate_limit: None
+  # Optional: Trusted proxies for determining IP address to rate limit
+  # NOTE: This is only used for rate limiting login attempts and does not bypass
+  # authentication. See the authentication docs for more details.
+  trusted_proxies: []
+  # Optional: Number of hashing iterations for user passwords
+  # As of Feb 2023, OWASP recommends 600000 iterations for PBKDF2-SHA256
+  # NOTE: changing this value will not automatically update password hashes, you
+  #       will need to change each user password for it to apply
+  hash_iterations: 600000
+
 # Optional: model modifications
 model:
   # Optional: path to the model (default: automatic based on detector)
@@ -80,7 +133,7 @@ model:
   # Valid values are nhwc or nchw (default: shown below)
   input_tensor: nhwc
   # Optional: Object detection model type, currently only used with the OpenVINO detector
-  # Valid values are ssd, yolox (default: shown below)
+  # Valid values are ssd, yolox, yolonas (default: shown below)
   model_type: ssd
   # Optional: Label name modifications. These are merged into the standard labelmap.
   labelmap:
@@ -149,7 +202,7 @@ birdseye:
   inactivity_threshold: 30
   # Optional: Configure the birdseye layout
   layout:
-    # Optional: Scaling factor for the layout calculator (default: shown below)
+    # Optional: Scaling factor for the layout calculator, range 1.0-5.0 (default: shown below)
     scaling_factor: 2.0
     # Optional: Maximum number of cameras to show at one time, showing the most recent (default: show all cameras)
     max_cameras: 1
@@ -237,7 +290,7 @@ objects:
   # Optional: mask to prevent all object types from being detected in certain areas (default: no mask)
   # Checks based on the bottom center of the bounding box of the object.
   # NOTE: This mask is COMBINED with the object type specific mask below
-  mask: 0,0,1000,0,1000,200,0,200
+  mask: 0.000,0.000,0.781,0.000,0.781,0.278,0.000,0.278
   # Optional: filters to reduce false positives for specific object types
   filters:
     person:
@@ -255,7 +308,7 @@ objects:
       threshold: 0.7
       # Optional: mask to prevent this object type from being detected in certain areas (default: no mask)
       # Checks based on the bottom center of the bounding box of the object
-      mask: 0,0,1000,0,1000,200,0,200
+      mask: 0.000,0.000,0.781,0.000,0.781,0.278,0.000,0.278
 
 # Optional: Review configuration
 # NOTE: Can be overridden at the camera level
@@ -311,7 +364,7 @@ motion:
   frame_height: 100
   # Optional: motion mask
   # NOTE: see docs for more detailed info on creating masks
-  mask: 0,900,1080,900,1080,1920,0,1920
+  mask: 0.000,0.469,1.000,0.469,1.000,1.000,0.000,1.000
   # Optional: improve contrast (default: shown below)
   # Enables dynamic contrast improvement. This should help improve night detections at the cost of making motion detection more sensitive
   # for daytime.
@@ -505,7 +558,7 @@ cameras:
       front_steps:
         # Required: List of x,y coordinates to define the polygon of the zone.
         # NOTE: Presence in a zone is evaluated only based on the bottom center of the objects bounding box.
-        coordinates: 545,1077,747,939,788,805
+        coordinates: 0.284,0.997,0.389,0.869,0.410,0.745
         # Optional: Number of consecutive frames required for object to be considered present in the zone (default: shown below).
         inertia: 3
         # Optional: Number of seconds that an object must loiter to be considered in the zone (default: shown below)
@@ -560,6 +613,9 @@ cameras:
       user: admin
       # Optional: password for login.
       password: admin
+      # Optional: Ignores time synchronization mismatches between the camera and the server during authentication. 
+      # Using NTP on both ends is recommended and this should only be set to True in a "safe" environment due to the security risk it represents. 
+      ignore_time_mismatch: False
       # Optional: PTZ camera object autotracking. Keeps a moving object in
       # the center of the frame by automatically moving the PTZ camera.
       autotracking:
@@ -603,12 +659,8 @@ cameras:
 
 # Optional
 ui:
-  # Optional: Set the default live mode for cameras in the UI (default: shown below)
-  live_mode: mse
   # Optional: Set a timezone to use in the UI (default: use browser local time)
   # timezone: America/Denver
-  # Optional: Use an experimental recordings / camera view UI (default: shown below)
-  use_experimental: False
   # Optional: Set the time format used.
   # Options are browser, 12hour, or 24hour (default: shown below)
   time_format: browser
@@ -655,4 +707,19 @@ telemetry:
   # Optional: Enable the latest version outbound check (default: shown below)
   # NOTE: If you use the HomeAssistant integration, disabling this will prevent it from reporting new versions
   version_check: True
+
+# Optional: Camera groups (default: no groups are setup)
+# NOTE: It is recommended to use the UI to setup camera groups
+camera_groups:
+  # Required: Name of camera group
+  front:
+    # Required: list of cameras in the group
+    cameras:
+      - front_cam
+      - side_cam
+      - front_doorbell_cam
+    # Required: icon used for group
+    icon: car
+    # Required: index of this group
+    order: 0
 ```

@@ -13,7 +13,7 @@ Depending on your system, these parameters may not be compatible. More informati
 
 ## Raspberry Pi 3/4
 
-Ensure you increase the allocated RAM for your GPU to at least 128 (`raspi-config` > Performance Options > GPU Memory).  
+Ensure you increase the allocated RAM for your GPU to at least 128 (`raspi-config` > Performance Options > GPU Memory).
 If you are using the HA addon, you may need to use the full access variant and turn off `Protection mode` for hardware acceleration.
 
 ```yaml
@@ -67,7 +67,7 @@ Or map in all the `/dev/video*` devices.
 
 ### Via VAAPI
 
-VAAPI supports automatic profile selection so it will work automatically with both H.264 and H.265 streams. VAAPI is recommended for all generations of Intel-based CPUs if QSV does not work.
+VAAPI supports automatic profile selection so it will work automatically with both H.264 and H.265 streams. VAAPI is recommended for all generations of Intel-based CPUs.
 
 ```yaml
 ffmpeg:
@@ -82,7 +82,7 @@ With some of the processors, like the J4125, the default driver `iHD` doesn't se
 
 ### Via Quicksync (>=10th Generation only)
 
-QSV must be set specifically based on the video encoding of the stream.
+If VAAPI does not work for you, you can try QSV if your processor supports it. QSV must be set specifically based on the video encoding of the stream.
 
 #### H.264 streams
 
@@ -288,10 +288,10 @@ These instructions were originally based on the [Jellyfin documentation](https:/
 
 ## NVIDIA Jetson (Orin AGX, Orin NX, Orin Nano\*, Xavier AGX, Xavier NX, TX2, TX1, Nano)
 
-A separate set of docker images is available that is based on Jetpack/L4T. They comes with an `ffmpeg` build
+A separate set of docker images is available that is based on Jetpack/L4T. They come with an `ffmpeg` build
 with codecs that use the Jetson's dedicated media engine. If your Jetson host is running Jetpack 4.6, use the
-`frigate-tensorrt-jp4` image, or if your Jetson host is running Jetpack 5.0+, use the `frigate-tensorrt-jp5`
-image. Note that the Orin Nano has no video encoder, so frigate will use software encoding on this platform,
+`stable-tensorrt-jp4` tagged image, or if your Jetson host is running Jetpack 5.0+, use the `stable-tensorrt-jp5`
+tagged image. Note that the Orin Nano has no video encoder, so frigate will use software encoding on this platform,
 but the image will still allow hardware decoding and tensorrt object detection.
 
 You will need to use the image with the nvidia container runtime:
@@ -302,7 +302,7 @@ You will need to use the image with the nvidia container runtime:
 docker run -d \
   ...
   --runtime nvidia
-  ghcr.io/blakeblackshear/frigate-tensorrt-jp5
+  ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp5
 ```
 
 ### Docker Compose - Jetson
@@ -312,7 +312,7 @@ version: '2.4'
 services:
   frigate:
     ...
-    image: ghcr.io/blakeblackshear/frigate-tensorrt-jp5
+    image: ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp5
     runtime: nvidia   # Add this
 ```
 
@@ -362,15 +362,15 @@ that NVDEC/NVDEC1 are in use.
 
 ## Rockchip platform
 
-Hardware accelerated video de-/encoding is supported on all Rockchip SoCs.
+Hardware accelerated video de-/encoding is supported on all Rockchip SoCs using [Nyanmisaka's FFmpeg 6.1 Fork](https://github.com/nyanmisaka/ffmpeg-rockchip) based on [Rockchip's mpp library](https://github.com/rockchip-linux/mpp).
 
-### Setup
+### Prerequisites
 
-Use a frigate docker image with `-rk` suffix and enable privileged mode by adding the `--privileged` flag to your docker run command or `privileged: true` to your `docker-compose.yml` file.
+Make sure to follow the [Rockchip specific installation instructions](/frigate/installation#rockchip-platform).
 
 ### Configuration
 
-Add one of the following ffmpeg presets to your `config.yaml` to enable hardware acceleration:
+Add one of the following FFmpeg presets to your `config.yaml` to enable hardware video processing:
 
 ```yaml
 # if you try to decode a h264 encoded stream
@@ -385,31 +385,5 @@ ffmpeg:
 :::note
 
 Make sure that your SoC supports hardware acceleration for your input stream. For example, if your camera streams with h265 encoding and a 4k resolution, your SoC must be able to de- and encode h265 with a 4k resolution or higher. If you are unsure whether your SoC meets the requirements, take a look at the datasheet.
-
-:::
-
-### go2rtc presets for hardware accelerated transcoding
-
-If your input stream is to be transcoded using hardware acceleration, there are these presets for go2rtc: `h264/rk` and `h265/rk`. You can use them this way:
-
-```
-go2rtc:
-  streams:
-    Cam_h264: ffmpeg:rtsp://username:password@192.168.1.123/av_stream/ch0#video=h264/rk
-    Cam_h265: ffmpeg:rtsp://username:password@192.168.1.123/av_stream/ch0#video=h265/rk
-```
-
-:::warning
-
-The go2rtc docs may suggest the following configuration:
-
-```
-go2rtc:
-  streams:
-    Cam_h264: ffmpeg:rtsp://username:password@192.168.1.123/av_stream/ch0#video=h264#hardware=rk
-    Cam_h265: ffmpeg:rtsp://username:password@192.168.1.123/av_stream/ch0#video=h265#hardware=rk
-```
-
-However, this does not currently work.
 
 :::

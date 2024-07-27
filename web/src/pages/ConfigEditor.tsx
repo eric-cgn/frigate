@@ -11,6 +11,8 @@ import copy from "copy-to-clipboard";
 import { useTheme } from "@/context/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
+import { LuCopy, LuSave } from "react-icons/lu";
+import { MdOutlineRestartAlt } from "react-icons/md";
 
 type SaveOptions = "saveonly" | "restart";
 
@@ -27,7 +29,7 @@ function ConfigEditor() {
   const [error, setError] = useState<string | undefined>();
 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const modelRef = useRef<monaco.editor.IEditorModel | null>(null);
+  const modelRef = useRef<monaco.editor.ITextModel | null>(null);
   const configRef = useRef<HTMLDivElement | null>(null);
 
   const onHandleSaveConfig = useCallback(
@@ -69,6 +71,7 @@ function ConfigEditor() {
     }
 
     copy(editorRef.current.getValue());
+    toast.success("Config copied to clipboard.", { position: "top-center" });
   }, [editorRef]);
 
   useEffect(() => {
@@ -117,48 +120,67 @@ function ConfigEditor() {
 
     return () => {
       configRef.current = null;
-      editorRef.current = null;
       modelRef.current = null;
     };
   });
+
+  useEffect(() => {
+    if (config && modelRef.current) {
+      modelRef.current.setValue(config);
+    }
+  }, [config]);
 
   if (!config) {
     return <ActivityIndicator />;
   }
 
   return (
-    <div className="absolute top-2 bottom-16 right-0 left-0 md:left-2">
-      <div className="lg:flex justify-between mr-1">
-        <Heading as="h2">Config</Heading>
-        <div>
-          <Button size="sm" className="mx-1" onClick={() => handleCopyConfig()}>
-            Copy Config
-          </Button>
-          <Button
-            size="sm"
-            className="mx-1"
-            onClick={() => onHandleSaveConfig("restart")}
-          >
-            Save & Restart
-          </Button>
-          <Button
-            size="sm"
-            className="mx-1"
-            onClick={() => onHandleSaveConfig("saveonly")}
-          >
-            Save Only
-          </Button>
+    <div className="absolute bottom-2 left-0 right-0 top-2 md:left-2">
+      <div className="relative h-full overflow-hidden">
+        <div className="mr-1 flex items-center justify-between">
+          <Heading as="h2" className="mb-0 ml-1 md:ml-0">
+            Config Editor
+          </Heading>
+          <div className="flex flex-row gap-1">
+            <Button
+              size="sm"
+              className="flex items-center gap-2"
+              onClick={() => handleCopyConfig()}
+            >
+              <LuCopy className="text-secondary-foreground" />
+              <span className="hidden md:block">Copy Config</span>
+            </Button>
+            <Button
+              size="sm"
+              className="flex items-center gap-2"
+              onClick={() => onHandleSaveConfig("restart")}
+            >
+              <div className="relative size-5">
+                <LuSave className="absolute left-0 top-0 size-3 text-secondary-foreground" />
+                <MdOutlineRestartAlt className="absolute size-4 translate-x-1 translate-y-1/2 text-secondary-foreground" />
+              </div>
+              <span className="hidden md:block">Save & Restart</span>
+            </Button>
+            <Button
+              size="sm"
+              className="flex items-center gap-2"
+              onClick={() => onHandleSaveConfig("saveonly")}
+            >
+              <LuSave className="text-secondary-foreground" />
+              <span className="hidden md:block">Save Only</span>
+            </Button>
+          </div>
         </div>
+
+        {error && (
+          <div className="mt-2 max-h-[30%] overflow-auto whitespace-pre-wrap border-2 border-muted bg-background_alt p-4 text-sm text-danger md:max-h-full">
+            {error}
+          </div>
+        )}
+
+        <div ref={configRef} className="mt-2 h-[calc(100%-2.75rem)]" />
       </div>
-
-      {error && (
-        <div className="p-4 overflow-scroll text-danger whitespace-pre-wrap">
-          {error}
-        </div>
-      )}
-
-      <div ref={configRef} className="h-full mt-2" />
-      <Toaster />
+      <Toaster closeButton={true} />
     </div>
   );
 }

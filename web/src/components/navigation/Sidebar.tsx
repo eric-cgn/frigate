@@ -1,24 +1,31 @@
 import Logo from "../Logo";
 import NavItem from "./NavItem";
 import { CameraGroupSelector } from "../filter/CameraGroupSelector";
-import { useLocation } from "react-router-dom";
-import GeneralSettings from "../settings/GeneralSettings";
-import AccountSettings from "../settings/AccountSettings";
+import { Link, useMatch } from "react-router-dom";
+import GeneralSettings from "../menu/GeneralSettings";
+import AccountSettings from "../menu/AccountSettings";
 import useNavigation from "@/hooks/use-navigation";
+import { baseUrl } from "@/api/baseUrl";
+import { useMemo } from "react";
 
 function Sidebar() {
-  const location = useLocation();
+  const basePath = useMemo(() => new URL(baseUrl).pathname, []);
+
+  const isRootMatch = useMatch("/");
+  const isBasePathMatch = useMatch(basePath);
 
   const navbarLinks = useNavigation();
 
   return (
-    <aside className="absolute w-[52px] z-10 left-o inset-y-0 overflow-y-auto scrollbar-hidden py-4 flex flex-col justify-between bg-background_alt border-r border-secondary-highlight">
+    <aside className="scrollbar-container scrollbar-hidden absolute inset-y-0 left-0 z-10 flex w-[52px] flex-col justify-between overflow-y-auto border-r border-secondary-highlight bg-background_alt py-4">
       <span tabIndex={0} className="sr-only" />
-      <div className="w-full flex flex-col gap-0 items-center">
-        <Logo className="w-8 h-8 mb-6" />
+      <div className="flex w-full flex-col items-center gap-0">
+        <Link to="/">
+          <Logo className="mb-6 h-8 w-8" />
+        </Link>
         {navbarLinks.map((item) => {
           const showCameraGroups =
-            item.id == 1 && item.url == location.pathname;
+            (isRootMatch || isBasePathMatch) && item.id === 1;
 
           return (
             <div key={item.id}>
@@ -32,7 +39,7 @@ function Sidebar() {
           );
         })}
       </div>
-      <div className="flex flex-col items-center mb-8">
+      <div className="mb-8 flex flex-col items-center gap-4">
         <GeneralSettings />
         <AccountSettings />
       </div>

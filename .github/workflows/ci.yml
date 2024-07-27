@@ -69,15 +69,15 @@ jobs:
             rpi.tags=${{ steps.setup.outputs.image-name }}-rpi
             *.cache-from=type=registry,ref=${{ steps.setup.outputs.cache-name }}-arm64
             *.cache-to=type=registry,ref=${{ steps.setup.outputs.cache-name }}-arm64,mode=max
-      #- name: Build and push RockChip build
-      #  uses: docker/bake-action@v3
-      #  with:
-      #    push: true
-      #    targets: rk
-      #    files: docker/rockchip/rk.hcl
-      #    set: |
-      #      rk.tags=${{ steps.setup.outputs.image-name }}-rk
-      #      *.cache-from=type=gha
+      - name: Build and push Rockchip build
+        uses: docker/bake-action@v3
+        with:
+          push: true
+          targets: rk
+          files: docker/rockchip/rk.hcl
+          set: |
+            rk.tags=${{ steps.setup.outputs.image-name }}-rk
+            *.cache-from=type=gha
   jetson_jp4_build:
     runs-on: ubuntu-latest
     name: Jetson Jetpack 4
@@ -220,7 +220,7 @@ jobs:
         with:
           string: ${{ github.repository }}
       - name: Log in to the Container registry
-        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

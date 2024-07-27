@@ -38,6 +38,7 @@ def output_frames(
     stop_event = mp.Event()
 
     def receiveSignal(signalNumber, frame):
+        logger.debug(f"Output frames process received signal {signalNumber}")
         stop_event.set()
 
     signal.signal(signal.SIGTERM, receiveSignal)
@@ -173,10 +174,13 @@ def move_preview_frames(loc: str):
     preview_holdover = os.path.join(CLIPS_DIR, "preview_restart_cache")
     preview_cache = os.path.join(CACHE_DIR, "preview_frames")
 
-    if loc == "clips":
-        shutil.move(preview_cache, preview_holdover)
-    elif loc == "cache":
-        if not os.path.exists(preview_holdover):
-            return
+    try:
+        if loc == "clips":
+            shutil.move(preview_cache, preview_holdover)
+        elif loc == "cache":
+            if not os.path.exists(preview_holdover):
+                return
 
-        shutil.move(preview_holdover, preview_cache)
+            shutil.move(preview_holdover, preview_cache)
+    except shutil.Error:
+        logger.error("Failed to restore preview cache.")

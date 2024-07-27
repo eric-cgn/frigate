@@ -1,4 +1,5 @@
 import { baseUrl } from "@/api/baseUrl";
+import { LivePlayerError } from "@/types/live";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type WebRtcPlayerProps = {
@@ -10,6 +11,7 @@ type WebRtcPlayerProps = {
   iOSCompatFullScreen?: boolean; // ios doesn't support fullscreen divs so we must support the video element
   pip?: boolean;
   onPlaying?: () => void;
+  onError?: (error: LivePlayerError) => void;
 };
 
 export default function WebRtcPlayer({
@@ -21,6 +23,7 @@ export default function WebRtcPlayer({
   iOSCompatFullScreen = false,
   pip = false,
   onPlaying,
+  onError,
 }: WebRtcPlayerProps) {
   // metadata
 
@@ -32,6 +35,8 @@ export default function WebRtcPlayer({
 
   const pcRef = useRef<RTCPeerConnection | undefined>();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [bufferTimeout, setBufferTimeout] = useState<NodeJS.Timeout>();
+  const videoLoadTimeoutRef = useRef<NodeJS.Timeout>();
 
   const PeerConnection = useCallback(
     async (media: string) => {
@@ -40,6 +45,7 @@ export default function WebRtcPlayer({
       }
 
       const pc = new RTCPeerConnection({
+        bundlePolicy: "max-bundle",
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
 
@@ -188,6 +194,27 @@ export default function WebRtcPlayer({
     videoRef.current.requestPictureInPicture();
   }, [pip, videoRef]);
 
+  useEffect(() => {
+    videoLoadTimeoutRef.current = setTimeout(() => {
+      onError?.("stalled");
+    }, 5000);
+
+    return () => {
+      if (videoLoadTimeoutRef.current) {
+        clearTimeout(videoLoadTimeoutRef.current);
+      }
+    };
+    // we know that these deps are correct
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLoadedData = () => {
+    if (videoLoadTimeoutRef.current) {
+      clearTimeout(videoLoadTimeoutRef.current);
+    }
+    onPlaying?.();
+  };
+
   return (
     <video
       ref={videoRef}
@@ -196,12 +223,45 @@ export default function WebRtcPlayer({
       autoPlay
       playsInline
       muted={!audioEnabled}
-      onLoadedData={onPlaying}
+      onLoadedData={handleLoadedData}
+      onProgress={
+        onError != undefined
+          ? () => {
+              if (videoRef.current?.paused) {
+                return;
+              }
+
+              if (bufferTimeout) {
+                clearTimeout(bufferTimeout);
+                setBufferTimeout(undefined);
+              }
+
+              setBufferTimeout(
+                setTimeout(() => {
+                  if (
+                    document.visibilityState === "visible" &&
+                    pcRef.current != undefined
+                  ) {
+                    onError("stalled");
+                  }
+                }, 3000),
+              );
+            }
+          : undefined
+      }
       onClick={
         iOSCompatFullScreen
           ? () => setiOSCompatControls(!iOSCompatControls)
           : undefined
       }
+      onError={(e) => {
+        if (
+          // @ts-expect-error code does exist
+          e.target.error.code == MediaError.MEDIA_ERR_NETWORK
+        ) {
+          onError?.("startup");
+        }
+      }}
     />
   );
 }

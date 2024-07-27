@@ -1,5 +1,5 @@
 import { useFrigateStats } from "@/api/ws";
-import { CameraLineGraph } from "@/components/graph/SystemGraph";
+import { CameraLineGraph } from "@/components/graph/CameraGraph";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { FrigateStats } from "@/types/stats";
@@ -26,7 +26,7 @@ export default function CameraMetrics({
   );
 
   const [statsHistory, setStatsHistory] = useState<FrigateStats[]>([]);
-  const { payload: updatedStats } = useFrigateStats();
+  const updatedStats = useFrigateStats();
 
   useEffect(() => {
     if (initialStats == undefined || initialStats.length == 0) {
@@ -43,7 +43,7 @@ export default function CameraMetrics({
     }
 
     if (updatedStats.service.last_updated > lastUpdated) {
-      setStatsHistory([...statsHistory, updatedStats]);
+      setStatsHistory([...statsHistory.slice(1), updatedStats]);
       setLastUpdated(Date.now() / 1000);
     }
   }, [initialStats, updatedStats, statsHistory, lastUpdated, setLastUpdated]);
@@ -66,6 +66,7 @@ export default function CameraMetrics({
       [key: string]: { name: string; data: { x: number; y: number }[] };
     } = {};
 
+    series["overall_fps"] = { name: "overall frames per second", data: [] };
     series["overall_dps"] = { name: "overall detections per second", data: [] };
     series["overall_skipped_dps"] = {
       name: "overall skipped detections per second",
@@ -76,6 +77,16 @@ export default function CameraMetrics({
       if (!stats) {
         return;
       }
+
+      let frames = 0;
+      Object.values(stats.cameras).forEach(
+        (camStat) => (frames += camStat.camera_fps),
+      );
+
+      series["overall_fps"].data.push({
+        x: statsIdx,
+        y: Math.round(frames),
+      });
 
       series["overall_dps"].data.push({
         x: statsIdx,
@@ -161,6 +172,10 @@ export default function CameraMetrics({
         if (!(key in series)) {
           const camName = key.replaceAll("_", " ");
           series[key] = {};
+          series[key]["fps"] = {
+            name: `${camName} frames per second`,
+            data: [],
+          };
           series[key]["det"] = {
             name: `${camName} detections per second`,
             data: [],
@@ -171,6 +186,10 @@ export default function CameraMetrics({
           };
         }
 
+        series[key]["fps"].data.push({
+          x: statsIdx,
+          y: camStats.camera_fps,
+        });
         series[key]["det"].data.push({
           x: statsIdx,
           y: camStats.detection_fps,
@@ -185,36 +204,36 @@ export default function CameraMetrics({
   }, [statsHistory]);
 
   return (
-    <div className="size-full mt-4 flex flex-col gap-3 overflow-y-auto">
-      <div className="text-muted-foreground text-sm font-medium">Overview</div>
+    <div className="scrollbar-container mt-4 flex size-full flex-col gap-3 overflow-y-auto">
+      <div className="text-sm font-medium text-muted-foreground">Overview</div>
       <div className="grid grid-cols-1 md:grid-cols-3">
         {statsHistory.length != 0 ? (
-          <div className="p-2.5 bg-background_alt rounded-2xl">
-            <div className="mb-5">DPS</div>
+          <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
+            <div className="mb-5">Frames / Detections</div>
             <CameraLineGraph
               graphId="overall-stats"
-              unit=" DPS"
-              dataLabels={["detect", "skipped"]}
+              unit=""
+              dataLabels={["camera", "detect", "skipped"]}
               updateTimes={updateTimes}
               data={overallFpsSeries}
             />
           </div>
         ) : (
-          <Skeleton className="w-full h-32" />
+          <Skeleton className="h-32 w-full rounded-lg md:rounded-2xl" />
         )}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {config &&
           Object.values(config.cameras).map((camera) => {
             if (camera.enabled) {
               return (
-                <div className="w-full flex flex-col gap-3">
-                  <div className="capitalize text-muted-foreground text-sm font-medium">
+                <div className="flex w-full flex-col gap-3">
+                  <div className="text-sm font-medium capitalize text-muted-foreground">
                     {camera.name.replaceAll("_", " ")}
                   </div>
-                  <div key={camera.name} className="grid sm:grid-cols-2 gap-2">
+                  <div key={camera.name} className="grid gap-2 sm:grid-cols-2">
                     {Object.keys(cameraCpuSeries).includes(camera.name) ? (
-                      <div className="p-2.5 bg-background_alt rounded-2xl">
+                      <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
                         <div className="mb-5">CPU</div>
                         <CameraLineGraph
                           graphId={`${camera.name}-cpu`}
@@ -227,15 +246,15 @@ export default function CameraMetrics({
                         />
                       </div>
                     ) : (
-                      <Skeleton className="size-full aspect-video" />
+                      <Skeleton className="aspect-video size-full" />
                     )}
                     {Object.keys(cameraFpsSeries).includes(camera.name) ? (
-                      <div className="p-2.5 bg-background_alt rounded-2xl">
-                        <div className="mb-5">DPS</div>
+                      <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
+                        <div className="mb-5">Frames / Detections</div>
                         <CameraLineGraph
                           graphId={`${camera.name}-dps`}
-                          unit=" DPS"
-                          dataLabels={["detect", "skipped"]}
+                          unit=""
+                          dataLabels={["camera", "detect", "skipped"]}
                           updateTimes={updateTimes}
                           data={Object.values(
                             cameraFpsSeries[camera.name] || {},
@@ -243,7 +262,7 @@ export default function CameraMetrics({
                         />
                       </div>
                     ) : (
-                      <Skeleton className="size-full aspect-video" />
+                      <Skeleton className="aspect-video size-full" />
                     )}
                   </div>
                 </div>

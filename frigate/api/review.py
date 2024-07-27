@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 from flask import Blueprint, jsonify, make_response, request
 from peewee import Case, DoesNotExist, fn, operator
+from playhouse.shortcuts import model_to_dict
 
 from frigate.models import Recordings, ReviewSegment
 from frigate.util.builtin import get_tz_modifiers
@@ -21,6 +22,7 @@ ReviewBp = Blueprint("reviews", __name__)
 def review():
     cameras = request.args.get("cameras", "all")
     labels = request.args.get("labels", "all")
+    zones = request.args.get("zones", "all")
     reviewed = request.args.get("reviewed", type=int, default=0)
     limit = request.args.get("limit", type=int, default=None)
     severity = request.args.get("severity", None)
@@ -59,6 +61,20 @@ def review():
         label_clause = reduce(operator.or_, label_clauses)
         clauses.append((label_clause))
 
+    if zones != "all":
+        # use matching so segments with multiple zones
+        # still match on a search where any zone matches
+        zone_clauses = []
+        filtered_zones = zones.split(",")
+
+        for zone in filtered_zones:
+            zone_clauses.append(
+                (ReviewSegment.data["zones"].cast("text") % f'*"{zone}"*')
+            )
+
+        zone_clause = reduce(operator.or_, zone_clauses)
+        clauses.append((zone_clause))
+
     if reviewed == 0:
         clauses.append((ReviewSegment.has_been_reviewed == False))
 
@@ -78,6 +94,14 @@ def review():
     return jsonify([r for r in review])
 
 
+@ReviewBp.route("/review/<id>")
+def get_review(id: str):
+    try:
+        return model_to_dict(ReviewSegment.get(ReviewSegment.id == id))
+    except DoesNotExist:
+        return "Review item not found", 404
+
+
 @ReviewBp.route("/review/summary")
 def review_summary():
     tz_name = request.args.get("timezone", default="utc", type=str)
@@ -87,6 +111,7 @@ def review_summary():
 
     cameras = request.args.get("cameras", "all")
     labels = request.args.get("labels", "all")
+    zones = request.args.get("zones", "all")
 
     clauses = [(ReviewSegment.start_time > day_ago)]
 
@@ -108,6 +133,20 @@ def review_summary():
 
         label_clause = reduce(operator.or_, label_clauses)
         clauses.append((label_clause))
+
+    if zones != "all":
+        # use matching so segments with multiple zones
+        # still match on a search where any zone matches
+        zone_clauses = []
+        filtered_zones = zones.split(",")
+
+        for zone in filtered_zones:
+            zone_clauses.append(
+                (ReviewSegment.data["zones"].cast("text") % f'*"{zone}"*')
+            )
+
+        zone_clause = reduce(operator.or_, zone_clauses)
+        clauses.append((zone_clause))
 
     last_24 = (
         ReviewSegment.select(
@@ -432,6 +471,12 @@ def motion_activity():
     # resample data using pandas to get activity on scaled basis
     df = pd.DataFrame(data, columns=["start_time", "motion", "camera"])
 
+    if df.empty:
+        logger.warning("No motion data found for the requested time range")
+        return jsonify([])
+
+    df = df.astype(dtype={"motion": "float32"})
+
     # set date as datetime index
     df["start_time"] = pd.to_datetime(df["start_time"], unit="s")
     df.set_index(["start_time"], inplace=True)
@@ -452,11 +497,13 @@ def motion_activity():
 
     for i in range(0, length, chunk):
         part = df.iloc[i : i + chunk]
-        df.iloc[i : i + chunk, 0] = (
-            (part["motion"] - part["motion"].min())
-            / (part["motion"].max() - part["motion"].min())
-            * 100
-        ).fillna(0.0)
+        min_val, max_val = part["motion"].min(), part["motion"].max()
+        if min_val != max_val:
+            df.iloc[i : i + chunk, 0] = (
+                part["motion"].sub(min_val).div(max_val - min_val).mul(100).fillna(0)
+            )
+        else:
+            df.iloc[i : i + chunk, 0] = 0.0
 
     # change types for output
     df.index = df.index.astype(int) // (10**9)
@@ -508,6 +555,7 @@ def audio_activity():
 
     # resample data using pandas to get activity on scaled basis
     df = pd.DataFrame(data, columns=["start_time", "audio"])
+    df = df.astype(dtype={"audio": "float16"})
 
     # set date as datetime index
     df["start_time"] = pd.to_datetime(df["start_time"], unit="s")

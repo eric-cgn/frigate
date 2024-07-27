@@ -2,6 +2,7 @@ import { ReviewSegment } from "@/types/review";
 import { Button } from "../ui/button";
 import { LuRefreshCcw } from "react-icons/lu";
 import { MutableRefObject, useMemo } from "react";
+import { cn } from "@/lib/utils";
 
 type NewReviewDataProps = {
   className: string;
@@ -27,13 +28,14 @@ export default function NewReviewData({
 
   return (
     <div className={className}>
-      <div className="flex justify-center items-center mr-[65px] md:mr-[115px] pointer-events-auto">
+      <div className="pointer-events-auto mr-[65px] flex items-center justify-center md:mr-[115px]">
         <Button
-          className={`${
+          className={cn(
             hasUpdate
-              ? "animate-in slide-in-from-top duration-500"
-              : "invisible"
-          }  text-center mt-5 mx-auto bg-gray-400 text-white`}
+              ? "duration-500 animate-in slide-in-from-top"
+              : "invisible",
+            "mx-auto mt-5 bg-gray-400 text-center text-white",
+          )}
           onClick={() => {
             pullLatestData();
             if (contentRef.current) {
@@ -44,7 +46,7 @@ export default function NewReviewData({
             }
           }}
         >
-          <LuRefreshCcw className="w-4 h-4 mr-2" />
+          <LuRefreshCcw className="mr-2 h-4 w-4" />
           New Items To Review
         </Button>
       </div>

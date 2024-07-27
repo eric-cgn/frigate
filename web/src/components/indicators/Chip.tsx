@@ -1,5 +1,7 @@
+import { cn } from "@/lib/utils";
 import { LogSeverity } from "@/types/log";
 import { ReactNode, useMemo, useRef } from "react";
+import { isIOS } from "react-device-detect";
 import { CSSTransition } from "react-transition-group";
 
 type ChipProps = {
@@ -32,7 +34,11 @@ export default function Chip({
     >
       <div
         ref={nodeRef}
-        className={`flex px-2 py-1.5 rounded-2xl items-center z-10 ${className}`}
+        className={cn(
+          "flex items-center rounded-2xl px-2 py-1.5",
+          className,
+          !isIOS && "z-10",
+        )}
         onClick={onClick}
       >
         {children}
@@ -59,7 +65,7 @@ export function LogChip({ severity, onClickSeverity }: LogChipProps) {
 
   return (
     <div
-      className={`py-[1px] px-1 capitalize text-xs rounded-md ${onClickSeverity ? "cursor-pointer" : ""} ${severityClassName}`}
+      className={`rounded-md px-1 py-[1px] text-xs capitalize ${onClickSeverity ? "cursor-pointer" : ""} ${severityClassName}`}
       onClick={(e) => {
         e.stopPropagation();
 

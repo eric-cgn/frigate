@@ -12,10 +12,12 @@ import { FrigateConfig } from "@/types/frigateConfig";
 import { Preview } from "@/types/preview";
 import {
   MotionData,
+  REVIEW_PADDING,
   ReviewFilter,
   ReviewSegment,
   ReviewSeverity,
   ReviewSummary,
+  SegmentedReviewData,
 } from "@/types/review";
 import { getChunkedTimeRange } from "@/utils/timelineUtil";
 import axios from "axios";
@@ -27,8 +29,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { isDesktop, isMobile } from "react-device-detect";
-import { LuFolderCheck } from "react-icons/lu";
+import { isDesktop, isMobile, isMobileOnly } from "react-device-detect";
+import { LuFolderCheck, LuFolderX } from "react-icons/lu";
 import { MdCircle } from "react-icons/md";
 import useSWR from "swr";
 import MotionReviewTimeline from "@/components/timeline/MotionReviewTimeline";
@@ -44,15 +46,24 @@ import { useCameraMotionNextTimestamp } from "@/hooks/use-camera-activity";
 import useOptimisticState from "@/hooks/use-optimistic-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import scrollIntoView from "scroll-into-view-if-needed";
+import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { FilterList, LAST_24_HOURS_KEY } from "@/types/filter";
+import { GiSoundWaves } from "react-icons/gi";
+import useKeyboardListener from "@/hooks/use-keyboard-listener";
 
 type EventViewProps = {
-  reviews?: ReviewSegment[];
+  reviewItems?: SegmentedReviewData;
+  currentReviewItems: ReviewSegment[] | null;
   reviewSummary?: ReviewSummary;
   relevantPreviews?: Preview[];
   timeRange: TimeRange;
   filter?: ReviewFilter;
   severity: ReviewSeverity;
   startTime?: number;
+  showReviewed: boolean;
+  setShowReviewed: (show: boolean) => void;
   setSeverity: (severity: ReviewSeverity) => void;
   markItemAsReviewed: (review: ReviewSegment) => void;
   markAllItemsAsReviewed: (currentItems: ReviewSegment[]) => void;
@@ -61,13 +72,16 @@ type EventViewProps = {
   updateFilter: (filter: ReviewFilter) => void;
 };
 export default function EventView({
-  reviews,
+  reviewItems,
+  currentReviewItems,
   reviewSummary,
   relevantPreviews,
   timeRange,
   filter,
   severity,
   startTime,
+  showReviewed,
+  setShowReviewed,
   setSeverity,
   markItemAsReviewed,
   markAllItemsAsReviewed,
@@ -82,12 +96,12 @@ export default function EventView({
 
   const reviewCounts = useMemo(() => {
     if (!reviewSummary) {
-      return { alert: 0, detection: 0, significant_motion: 0 };
+      return { alert: -1, detection: -1, significant_motion: -1 };
     }
 
     let summary;
     if (filter?.before == undefined) {
-      summary = reviewSummary["last24Hours"];
+      summary = reviewSummary[LAST_24_HOURS_KEY];
     } else {
       const day = new Date(filter.before * 1000);
       const key = `${day.getFullYear()}-${("0" + (day.getMonth() + 1)).slice(-2)}-${("0" + day.getDate()).slice(-2)}`;
@@ -95,14 +109,14 @@ export default function EventView({
     }
 
     if (!summary) {
-      return { alert: -1, detection: -1, significant_motion: -1 };
+      return { alert: 0, detection: 0, significant_motion: 0 };
     }
 
-    if (filter?.showReviewed == 1) {
+    if (showReviewed) {
       return {
-        alert: summary.total_alert,
-        detection: summary.total_detection,
-        significant_motion: summary.total_motion,
+        alert: summary.total_alert ?? 0,
+        detection: summary.total_detection ?? 0,
+        significant_motion: summary.total_motion ?? 0,
       };
     } else {
       return {
@@ -111,43 +125,7 @@ export default function EventView({
         significant_motion: summary.total_motion - summary.reviewed_motion,
       };
     }
-  }, [filter, reviewSummary]);
-
-  // review paging
-
-  const reviewItems = useMemo(() => {
-    if (!reviews) {
-      return undefined;
-    }
-
-    const all: ReviewSegment[] = [];
-    const alerts: ReviewSegment[] = [];
-    const detections: ReviewSegment[] = [];
-    const motion: ReviewSegment[] = [];
-
-    reviews?.forEach((segment) => {
-      all.push(segment);
-
-      switch (segment.severity) {
-        case "alert":
-          alerts.push(segment);
-          break;
-        case "detection":
-          detections.push(segment);
-          break;
-        default:
-          motion.push(segment);
-          break;
-      }
-    });
-
-    return {
-      all: all,
-      alert: alerts,
-      detection: detections,
-      significant_motion: motion,
-    };
-  }, [reviews]);
+  }, [filter, showReviewed, reviewSummary]);
 
   // review interaction
 
@@ -175,15 +153,27 @@ export default function EventView({
       } else {
         onOpenRecording({
           camera: review.camera,
-          startTime: review.start_time,
+          startTime: review.start_time - REVIEW_PADDING,
           severity: review.severity,
         });
 
+        review.has_been_reviewed = true;
         markItemAsReviewed(review);
       }
     },
     [selectedReviews, setSelectedReviews, onOpenRecording, markItemAsReviewed],
   );
+  const onSelectAllReviews = useCallback(() => {
+    if (!currentReviewItems || currentReviewItems.length == 0) {
+      return;
+    }
+
+    if (selectedReviews.length < currentReviewItems.length) {
+      setSelectedReviews(currentReviewItems.map((seg) => seg.id));
+    } else {
+      setSelectedReviews([]);
+    }
+  }, [currentReviewItems, selectedReviews]);
 
   const exportReview = useCallback(
     (id: string) => {
@@ -193,10 +183,35 @@ export default function EventView({
         return;
       }
 
-      axios.post(
-        `export/${review.camera}/start/${review.start_time}/end/${review.end_time}`,
-        { playback: "realtime" },
-      );
+      const endTime = review.end_time
+        ? review.end_time + REVIEW_PADDING
+        : Date.now() / 1000;
+
+      axios
+        .post(
+          `export/${review.camera}/start/${review.start_time - REVIEW_PADDING}/end/${endTime}`,
+          { playback: "realtime" },
+        )
+        .then((response) => {
+          if (response.status == 200) {
+            toast.success(
+              "Successfully started export. View the file in the /exports folder.",
+              { position: "top-center" },
+            );
+          }
+        })
+        .catch((error) => {
+          if (error.response?.data?.message) {
+            toast.error(
+              `Failed to start export: ${error.response.data.message}`,
+              { position: "top-center" },
+            );
+          } else {
+            toast.error(`Failed to start export: ${error.message}`, {
+              position: "top-center",
+            });
+          }
+        });
     },
     [reviewItems],
   );
@@ -208,18 +223,39 @@ export default function EventView({
     100,
   );
 
+  // review filter info
+
+  const reviewFilterList = useMemo<FilterList>(() => {
+    const uniqueLabels = new Set<string>();
+    const uniqueZones = new Set<string>();
+
+    reviewItems?.all?.forEach((rev) => {
+      rev.data.objects.forEach((obj) =>
+        uniqueLabels.add(obj.replace("-verified", "")),
+      );
+      rev.data.audio.forEach((aud) => uniqueLabels.add(aud));
+    });
+
+    reviewItems?.all?.forEach((rev) => {
+      rev.data.zones.forEach((zone) => uniqueZones.add(zone));
+    });
+
+    return { labels: [...uniqueLabels], zones: [...uniqueZones] };
+  }, [reviewItems]);
+
   if (!config) {
     return <ActivityIndicator />;
   }
 
   return (
-    <div className="py-2 flex flex-col size-full">
-      <div className="h-11 mb-2 pl-3 pr-2 relative flex justify-between items-center">
+    <div className="flex size-full flex-col pt-2 md:py-2">
+      <Toaster closeButton={true} />
+      <div className="relative mb-2 flex h-11 items-center justify-between pl-2 pr-2 md:pl-3">
         {isMobile && (
-          <Logo className="absolute inset-x-1/2 -translate-x-1/2 h-8" />
+          <Logo className="absolute inset-x-1/2 h-8 -translate-x-1/2" />
         )}
         <ToggleGroup
-          className="*:px-3 *:py-4 *:rounded-md"
+          className="*:rounded-md *:px-3 *:py-4"
           type="single"
           size="sm"
           value={severityToggle}
@@ -228,35 +264,89 @@ export default function EventView({
           } // don't allow the severity to be unselected
         >
           <ToggleGroupItem
-            className={`${severityToggle == "alert" ? "" : "text-gray-500"}`}
+            className={cn(severityToggle != "alert" && "text-muted-foreground")}
             value="alert"
             aria-label="Select alerts"
           >
-            <MdCircle className="size-2 md:mr-[10px] text-severity_alert" />
-            <div className="hidden md:block">
-              Alerts{` ∙ ${reviewCounts.alert > -1 ? reviewCounts.alert : ""}`}
-            </div>
+            {isMobileOnly ? (
+              <div
+                className={cn(
+                  "flex size-6 items-center justify-center rounded text-severity_alert",
+                  severityToggle == "alert" ? "font-semibold" : "font-medium",
+                )}
+              >
+                {reviewCounts.alert > -1 ? (
+                  reviewCounts.alert
+                ) : (
+                  <ActivityIndicator className="size-4" />
+                )}
+              </div>
+            ) : (
+              <>
+                <MdCircle className="size-2 text-severity_alert md:mr-[10px]" />
+                <div className="hidden md:flex md:flex-row md:items-center">
+                  Alerts
+                  {reviewCounts.alert > -1 ? (
+                    ` ∙ ${reviewCounts.alert}`
+                  ) : (
+                    <ActivityIndicator className="ml-2 size-4" />
+                  )}
+                </div>
+              </>
+            )}
           </ToggleGroupItem>
           <ToggleGroupItem
-            className={`${severityToggle == "detection" ? "" : "text-gray-500"}`}
+            className={cn(
+              severityToggle != "detection" && "text-muted-foreground",
+            )}
             value="detection"
             aria-label="Select detections"
           >
-            <MdCircle className="size-2 md:mr-[10px] text-severity_detection" />
-            <div className="hidden md:block">
-              Detections
-              {` ∙ ${reviewCounts.detection > -1 ? reviewCounts.detection : ""}`}
-            </div>
+            {isMobileOnly ? (
+              <div
+                className={cn(
+                  "flex size-6 items-center justify-center rounded text-severity_detection",
+                  severityToggle == "detection"
+                    ? "font-semibold"
+                    : "font-medium",
+                )}
+              >
+                {reviewCounts.detection > -1 ? (
+                  reviewCounts.detection
+                ) : (
+                  <ActivityIndicator className="size-4" />
+                )}
+              </div>
+            ) : (
+              <>
+                <MdCircle className="size-2 text-severity_detection md:mr-[10px]" />
+                <div className="hidden md:flex md:flex-row md:items-center">
+                  Detections
+                  {reviewCounts.detection > -1 ? (
+                    ` ∙ ${reviewCounts.detection}`
+                  ) : (
+                    <ActivityIndicator className="ml-2 size-4" />
+                  )}
+                </div>
+              </>
+            )}
           </ToggleGroupItem>
           <ToggleGroupItem
-            className={`px-3 py-4 rounded-2xl ${
-              severityToggle == "significant_motion" ? "" : "text-gray-500"
-            }`}
+            className={cn(
+              "rounded-lg px-3 py-4",
+              severityToggle != "significant_motion" && "text-muted-foreground",
+            )}
             value="significant_motion"
             aria-label="Select motion"
           >
-            <MdCircle className="size-2 md:mr-[10px] text-severity_significant_motion" />
-            <div className="hidden md:block">Motion</div>
+            {isMobileOnly ? (
+              <GiSoundWaves className="size-6 rotate-90 text-severity_significant_motion" />
+            ) : (
+              <>
+                <MdCircle className="size-2 text-severity_significant_motion md:mr-[10px]" />
+                <div className="hidden md:block">Motion</div>
+              </>
+            )}
           </ToggleGroupItem>
         </ToggleGroup>
 
@@ -267,10 +357,14 @@ export default function EventView({
                 ? ["cameras", "date", "motionOnly"]
                 : ["cameras", "reviewed", "date", "general"]
             }
+            currentSeverity={severityToggle}
             reviewSummary={reviewSummary}
             filter={filter}
-            onUpdateFilter={updateFilter}
             motionOnly={motionOnly}
+            filterList={reviewFilterList}
+            showReviewed={showReviewed}
+            setShowReviewed={setShowReviewed}
+            onUpdateFilter={updateFilter}
             setMotionOnly={setMotionOnly}
           />
         ) : (
@@ -288,6 +382,7 @@ export default function EventView({
           <DetectionReview
             contentRef={contentRef}
             reviewItems={reviewItems}
+            currentItems={currentReviewItems}
             relevantPreviews={relevantPreviews}
             selectedReviews={selectedReviews}
             itemsToReview={reviewCounts[severityToggle]}
@@ -299,6 +394,7 @@ export default function EventView({
             markItemAsReviewed={markItemAsReviewed}
             markAllItemsAsReviewed={markAllItemsAsReviewed}
             onSelectReview={onSelectReview}
+            onSelectAllReviews={onSelectAllReviews}
             pullLatestData={pullLatestData}
           />
         )}
@@ -328,6 +424,7 @@ type DetectionReviewProps = {
     detection: ReviewSegment[];
     significant_motion: ReviewSegment[];
   };
+  currentItems: ReviewSegment[] | null;
   itemsToReview?: number;
   relevantPreviews?: Preview[];
   selectedReviews: string[];
@@ -339,11 +436,13 @@ type DetectionReviewProps = {
   markItemAsReviewed: (review: ReviewSegment) => void;
   markAllItemsAsReviewed: (currentItems: ReviewSegment[]) => void;
   onSelectReview: (review: ReviewSegment, ctrl: boolean) => void;
+  onSelectAllReviews: () => void;
   pullLatestData: () => void;
 };
 function DetectionReview({
   contentRef,
   reviewItems,
+  currentItems,
   itemsToReview,
   relevantPreviews,
   selectedReviews,
@@ -355,32 +454,12 @@ function DetectionReview({
   markItemAsReviewed,
   markAllItemsAsReviewed,
   onSelectReview,
+  onSelectAllReviews,
   pullLatestData,
 }: DetectionReviewProps) {
   const reviewTimelineRef = useRef<HTMLDivElement>(null);
 
   const segmentDuration = 60;
-
-  // review data
-  const currentItems = useMemo(() => {
-    if (!reviewItems) {
-      return null;
-    }
-
-    const current = reviewItems[severity];
-
-    if (!current || current.length == 0) {
-      return [];
-    }
-
-    if (filter?.showReviewed != 1) {
-      return current.filter((seg) => !seg.has_been_reviewed);
-    } else {
-      return current;
-    }
-    // only refresh when severity or filter changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [severity, filter, reviewItems?.all.length]);
 
   // preview
 
@@ -510,7 +589,7 @@ function DetectionReview({
     }
 
     const element = contentRef.current?.querySelector(
-      `[data-start="${startTime}"]`,
+      `[data-start="${startTime + REVIEW_PADDING}"]`,
     );
     if (element) {
       scrollIntoView(element, {
@@ -522,15 +601,27 @@ function DetectionReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startTime]);
 
+  // keyboard
+
+  useKeyboardListener(["a"], (key, modifiers) => {
+    if (modifiers.repeat || !modifiers.down) {
+      return;
+    }
+
+    if (key == "a" && modifiers.ctrl) {
+      onSelectAllReviews();
+    }
+  });
+
   return (
     <>
       <div
         ref={contentRef}
-        className="flex flex-1 flex-wrap content-start gap-2 md:gap-4 overflow-y-auto no-scrollbar"
+        className="no-scrollbar flex flex-1 flex-wrap content-start gap-2 overflow-y-auto md:gap-4"
       >
         {filter?.before == undefined && (
           <NewReviewData
-            className="absolute left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+            className="pointer-events-none absolute left-1/2 z-50 -translate-x-1/2"
             contentRef={contentRef}
             reviewItems={currentItems}
             itemsToReview={loading ? 0 : itemsToReview}
@@ -539,20 +630,20 @@ function DetectionReview({
         )}
 
         {!currentItems && (
-          <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2">
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <ActivityIndicator />
           </div>
         )}
 
         {!loading && currentItems?.length === 0 && (
-          <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 flex flex-col justify-center items-center text-center">
+          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
             <LuFolderCheck className="size-16" />
             There are no {severity.replace(/_/g, " ")}s to review
           </div>
         )}
 
         <div
-          className="w-full mx-2 px-1 grid sm:grid-cols-2 md:grid-cols-3 3xl:grid-cols-4 gap-2 md:gap-4"
+          className="grid w-full gap-2 px-1 sm:grid-cols-2 md:mx-2 md:grid-cols-3 md:gap-4 3xl:grid-cols-4"
           ref={contentRef}
         >
           {!loading && currentItems
@@ -570,7 +661,7 @@ function DetectionReview({
                     }
                     className="review-item relative rounded-lg"
                   >
-                    <div className="aspect-video rounded-lg overflow-hidden">
+                    <div className="aspect-video overflow-hidden rounded-lg">
                       <PreviewThumbnailPlayer
                         review={value}
                         allPreviews={relevantPreviews}
@@ -582,18 +673,21 @@ function DetectionReview({
                       />
                     </div>
                     <div
-                      className={`review-item-ring pointer-events-none z-10 absolute rounded-lg inset-0 size-full -outline-offset-[2.8px] outline outline-[3px] ${selected ? `outline-severity_${value.severity} shadow-severity_${value.severity}` : "outline-transparent duration-500"}`}
+                      className={`review-item-ring pointer-events-none absolute inset-0 z-10 size-full rounded-lg outline outline-[3px] -outline-offset-[2.8px] ${selected ? `outline-severity_${value.severity} shadow-severity_${value.severity}` : "outline-transparent duration-500"}`}
                     />
                   </div>
                 );
               })
-            : Array(itemsToReview)
+            : (itemsToReview ?? 0) > 0 &&
+              Array(itemsToReview)
                 .fill(0)
-                .map(() => <Skeleton className="size-full aspect-video" />)}
+                .map((_, idx) => (
+                  <Skeleton key={idx} className="aspect-video size-full" />
+                ))}
           {!loading &&
-            (currentItems?.length ?? 0) > 0 &&
+            (currentItems?.filter((seg) => seg.end_time)?.length ?? 0) > 0 &&
             (itemsToReview ?? 0) > 0 && (
-              <div className="col-span-full flex justify-center items-center">
+              <div className="col-span-full flex items-center justify-center">
                 <Button
                   className="text-white"
                   variant="select"
@@ -607,8 +701,8 @@ function DetectionReview({
             )}
         </div>
       </div>
-      <div className="w-[65px] md:w-[110px] flex flex-row">
-        <div className="w-[55px] md:w-[100px] overflow-y-auto no-scrollbar">
+      <div className="flex w-[65px] flex-row md:w-[110px]">
+        <div className="no-scrollbar w-[55px] overflow-y-auto md:w-[100px]">
           {loading ? (
             <Skeleton className="size-full" />
           ) : (
@@ -792,6 +886,11 @@ function MotionReview({
         return;
       }
 
+      if (nextTimestamp >= timeRange.before - 4) {
+        setPlaying(false);
+        return;
+      }
+
       const handleTimeout = () => {
         setCurrentTime(nextTimestamp);
         timeoutIdRef.current = setTimeout(handleTimeout, 500 / playbackRate);
@@ -805,7 +904,7 @@ function MotionReview({
         }
       };
     }
-  }, [playing, playbackRate, nextTimestamp]);
+  }, [playing, playbackRate, nextTimestamp, setPlaying, timeRange]);
 
   const { alignStartDateToTimeline } = useTimelineUtils({
     segmentDuration,
@@ -855,16 +954,33 @@ function MotionReview({
     ],
   );
 
-  if (!relevantPreviews) {
+  if (motionData?.length === 0) {
+    return (
+      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
+        <LuFolderX className="size-16" />
+        No motion data found
+      </div>
+    );
+  }
+
+  if (relevantPreviews == undefined) {
     return <ActivityIndicator />;
   }
 
   return (
     <>
-      <div className="flex flex-1 flex-wrap content-start gap-2 md:gap-4 overflow-y-auto no-scrollbar">
+      <div className="no-scrollbar flex flex-1 flex-wrap content-start gap-2 overflow-y-auto md:gap-4">
         <div
           ref={contentRef}
-          className="w-full mx-2 px-1 grid sm:grid-cols-2 xl:grid-cols-3 3xl:grid-cols-4 gap-2 md:gap-4 overflow-auto no-scrollbar"
+          className={cn(
+            "no-scrollbar grid w-full grid-cols-1",
+            isMobile && "landscape:grid-cols-2",
+            reviewCameras.length > 3 &&
+              isMobile &&
+              "portrait:md:grid-cols-2 landscape:md:grid-cols-3",
+            isDesktop && "grid-cols-2 lg:grid-cols-3",
+            "gap-2 overflow-auto px-1 md:mx-2 md:gap-4 xl:grid-cols-3 3xl:grid-cols-4",
+          )}
         >
           {reviewCameras.map((camera) => {
             let grow;
@@ -874,11 +990,10 @@ function MotionReview({
               grow = "aspect-wide";
               spans = "sm:col-span-2";
             } else if (aspectRatio < 1) {
-              grow = "md:h-full aspect-tall";
+              grow = "h-full aspect-tall";
               spans = "md:row-span-2";
             } else {
               grow = "aspect-video";
-              spans = "";
             }
             const detectionType = getDetectionType(camera.name);
             return (
@@ -886,11 +1001,11 @@ function MotionReview({
                 {motionData ? (
                   <>
                     <PreviewPlayer
-                      className={`rounded-2xl ${spans} ${grow}`}
+                      className={`rounded-lg md:rounded-2xl ${spans} ${grow}`}
                       camera={camera.name}
                       timeRange={currentTimeRange}
                       startTime={previewStart}
-                      cameraPreviews={relevantPreviews || []}
+                      cameraPreviews={relevantPreviews}
                       isScrubbing={scrubbing}
                       onControllerReady={(controller) => {
                         videoPlayersRef.current[camera.name] = controller;
@@ -907,12 +1022,12 @@ function MotionReview({
                       }
                     />
                     <div
-                      className={`review-item-ring pointer-events-none z-20 absolute rounded-lg inset-0 size-full -outline-offset-[2.8px] outline outline-[3px] ${detectionType ? `outline-severity_${detectionType} shadow-severity_${detectionType}` : "outline-transparent duration-500"}`}
+                      className={`review-item-ring pointer-events-none absolute inset-0 z-20 size-full rounded-lg outline outline-[3px] -outline-offset-[2.8px] ${detectionType ? `outline-severity_${detectionType} shadow-severity_${detectionType}` : "outline-transparent duration-500"}`}
                     />
                   </>
                 ) : (
                   <Skeleton
-                    className={`rounded-2xl size-full ${spans} ${grow}`}
+                    className={`size-full rounded-lg md:rounded-2xl ${spans} ${grow}`}
                   />
                 )}
               </div>
@@ -920,7 +1035,7 @@ function MotionReview({
           })}
         </div>
       </div>
-      <div className="w-[55px] md:w-[100px] overflow-y-auto no-scrollbar">
+      <div className="no-scrollbar w-[55px] overflow-y-auto md:w-[100px]">
         {motionData ? (
           <MotionReviewTimeline
             segmentDuration={segmentDuration}
@@ -949,37 +1064,35 @@ function MotionReview({
         )}
       </div>
 
-      {!scrubbing && (
-        <VideoControls
-          className="absolute bottom-16 left-1/2 -translate-x-1/2"
-          features={{
-            volume: false,
-            seek: true,
-            playbackRate: true,
-          }}
-          isPlaying={playing}
-          playbackRates={[4, 8, 12, 16]}
-          playbackRate={playbackRate}
-          controlsOpen={controlsOpen}
-          setControlsOpen={setControlsOpen}
-          onPlayPause={setPlaying}
-          onSeek={(diff) => {
-            const wasPlaying = playing;
+      <VideoControls
+        className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-secondary"
+        features={{
+          volume: false,
+          seek: true,
+          playbackRate: true,
+          fullscreen: false,
+        }}
+        isPlaying={playing}
+        show={!scrubbing || controlsOpen}
+        playbackRates={[4, 8, 12, 16]}
+        playbackRate={playbackRate}
+        setControlsOpen={setControlsOpen}
+        onPlayPause={setPlaying}
+        onSeek={(diff) => {
+          const wasPlaying = playing;
 
-            if (wasPlaying) {
-              setPlaying(false);
-            }
+          if (wasPlaying) {
+            setPlaying(false);
+          }
 
-            setCurrentTime(currentTime + diff);
+          setCurrentTime(currentTime + diff);
 
-            if (wasPlaying) {
-              setTimeout(() => setPlaying(true), 100);
-            }
-          }}
-          onSetPlaybackRate={setPlaybackRate}
-          show={currentTime < timeRange.before - 4}
-        />
-      )}
+          if (wasPlaying) {
+            setTimeout(() => setPlaying(true), 100);
+          }
+        }}
+        onSetPlaybackRate={setPlaybackRate}
+      />
     </>
   );
 }

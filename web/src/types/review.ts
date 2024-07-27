@@ -15,16 +15,27 @@ export type ReviewData = {
   audio: string[];
   detections: string[];
   objects: string[];
+  sub_labels?: string[];
   significant_motion_areas: number[];
   zones: string[];
 };
 
+export type SegmentedReviewData =
+  | {
+      all: ReviewSegment[];
+      alert: ReviewSegment[];
+      detection: ReviewSegment[];
+      significant_motion: ReviewSegment[];
+    }
+  | undefined;
+
 export type ReviewFilter = {
   cameras?: string[];
   labels?: string[];
+  zones?: string[];
   before?: number;
   after?: number;
-  showReviewed?: 0 | 1;
+  showAll?: boolean;
 };
 
 type ReviewSummaryDay = {
@@ -47,3 +58,5 @@ export type MotionData = {
   audio?: number;
   camera: string;
 };
+
+export const REVIEW_PADDING = 4;

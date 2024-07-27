@@ -1,5 +1,7 @@
 """Handle communication between Frigate and other applications."""
 
+import datetime
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
@@ -7,9 +9,11 @@ from typing import Any, Callable, Optional
 from frigate.comms.config_updater import ConfigPublisher
 from frigate.config import BirdseyeModeEnum, FrigateConfig
 from frigate.const import (
+    CLEAR_ONGOING_REVIEW_SEGMENTS,
     INSERT_MANY_RECORDINGS,
     INSERT_PREVIEW,
     REQUEST_REGION_GRID,
+    UPDATE_CAMERA_ACTIVITY,
     UPSERT_REVIEW_SEGMENT,
 )
 from frigate.models import Previews, Recordings, ReviewSegment
@@ -74,6 +78,8 @@ class Dispatcher:
         for comm in self.comms:
             comm.subscribe(self._receive)
 
+        self.camera_activity = {}
+
     def _receive(self, topic: str, payload: str) -> Optional[Any]:
         """Handle receiving of payload from communicators."""
         if topic.endswith("set"):
@@ -116,6 +122,14 @@ class Dispatcher:
                 )
                 .execute()
             )
+        elif topic == CLEAR_ONGOING_REVIEW_SEGMENTS:
+            ReviewSegment.update(end_time=datetime.datetime.now().timestamp()).where(
+                ReviewSegment.end_time == None
+            ).execute()
+        elif topic == UPDATE_CAMERA_ACTIVITY:
+            self.camera_activity = payload
+        elif topic == "onConnect":
+            self.publish("camera_activity", json.dumps(self.camera_activity))
         else:
             self.publish(topic, payload, retain=False)
 

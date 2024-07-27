@@ -11,6 +11,8 @@ import { FaVideo } from "react-icons/fa";
 import Logo from "@/components/Logo";
 import useOptimisticState from "@/hooks/use-optimistic-state";
 import CameraMetrics from "@/views/system/CameraMetrics";
+import { useHashState } from "@/hooks/use-overlay-state";
+import { capitalizeFirstLetter } from "@/utils/stringUtil";
 
 const metrics = ["general", "storage", "cameras"] as const;
 type SystemMetric = (typeof metrics)[number];
@@ -18,12 +20,18 @@ type SystemMetric = (typeof metrics)[number];
 function System() {
   // stats page
 
-  const [page, setPage] = useState<SystemMetric>("general");
-  const [pageToggle, setPageToggle] = useOptimisticState(page, setPage, 100);
+  const [page, setPage] = useHashState<SystemMetric>();
+  const [pageToggle, setPageToggle] = useOptimisticState(
+    page ?? "general",
+    setPage,
+    100,
+  );
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now() / 1000);
 
   useEffect(() => {
-    document.title = `${pageToggle[0].toUpperCase()}${pageToggle.substring(1)} Stats - Frigate`;
+    if (pageToggle) {
+      document.title = `${capitalizeFirstLetter(pageToggle)} Stats - Frigate`;
+    }
   }, [pageToggle]);
 
   // stats collection
@@ -33,13 +41,13 @@ function System() {
   });
 
   return (
-    <div className="size-full p-2 flex flex-col">
-      <div className="w-full h-11 relative flex justify-between items-center">
+    <div className="flex size-full flex-col p-2">
+      <div className="relative flex h-11 w-full items-center justify-between">
         {isMobile && (
-          <Logo className="absolute inset-x-1/2 -translate-x-1/2 h-8" />
+          <Logo className="absolute inset-x-1/2 h-8 -translate-x-1/2" />
         )}
         <ToggleGroup
-          className="*:px-3 *:py-4 *:rounded-md"
+          className="*:rounded-md *:px-3 *:py-4"
           type="single"
           size="sm"
           value={pageToggle}
@@ -52,7 +60,7 @@ function System() {
           {Object.values(metrics).map((item) => (
             <ToggleGroupItem
               key={item}
-              className={`flex items-center justify-between gap-2 ${pageToggle == item ? "" : "*:text-gray-500"}`}
+              className={`flex items-center justify-between gap-2 ${pageToggle == item ? "" : "*:text-muted-foreground"}`}
               value={item}
               aria-label={`Select ${item}`}
             >
@@ -64,18 +72,18 @@ function System() {
           ))}
         </ToggleGroup>
 
-        <div className="h-full flex items-center">
+        <div className="flex h-full items-center">
           {lastUpdated && (
-            <div className="h-full text-muted-foreground text-sm content-center">
+            <div className="h-full content-center text-sm text-muted-foreground">
               Last refreshed: <TimeAgo time={lastUpdated * 1000} dense />
             </div>
           )}
         </div>
       </div>
       <div className="mt-2 flex items-end gap-2">
-        <div className="h-full font-medium content-center">System</div>
+        <div className="h-full content-center font-medium">System</div>
         {statsSnapshot && (
-          <div className="h-full text-muted-foreground text-sm content-center">
+          <div className="h-full content-center text-sm text-muted-foreground">
             {statsSnapshot.service.version}
           </div>
         )}

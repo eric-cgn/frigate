@@ -8,6 +8,7 @@ import React, {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import {
   HoverCard,
@@ -151,7 +152,7 @@ export function EventSegment({
       : ""
   } ${
     isFirstSegmentInMinimap || isLastSegmentInMinimap
-      ? "relative h-[8px] border-b-2 border-neutral-600"
+      ? "relative h-[8px] border-b-2 border-neutral_variant"
       : ""
   }`;
 
@@ -195,9 +196,48 @@ export function EventSegment({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startTimestamp]);
 
+  const [segmentRendered, setSegmentRendered] = useState(false);
+  const segmentObserverRef = useRef<IntersectionObserver | null>(null);
+  const segmentRef = useRef(null);
+
+  useEffect(() => {
+    const segmentObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !segmentRendered) {
+          setSegmentRendered(true);
+        }
+      },
+      { threshold: 0 },
+    );
+
+    if (segmentRef.current) {
+      segmentObserver.observe(segmentRef.current);
+    }
+
+    segmentObserverRef.current = segmentObserver;
+
+    return () => {
+      if (segmentObserverRef.current) {
+        segmentObserverRef.current.disconnect();
+      }
+    };
+  }, [segmentRendered]);
+
+  if (!segmentRendered) {
+    return (
+      <div
+        key={segmentKey}
+        ref={segmentRef}
+        data-segment-id={segmentKey}
+        className={`segment ${segmentClasses}`}
+      />
+    );
+  }
+
   return (
     <div
       key={segmentKey}
+      ref={segmentRef}
       data-segment-id={segmentKey}
       className={`segment ${segmentClasses}`}
       onClick={segmentClick}
@@ -229,16 +269,16 @@ export function EventSegment({
           {severityValue === displaySeverityType && (
             <HoverCard openDelay={200} closeDelay={100}>
               <HoverCardTrigger asChild>
-                <div className="absolute left-1/2 transform -translate-x-1/2 w-[20px] md:w-[40px] h-[8px] z-10 cursor-pointer">
-                  <div className="flex flex-row justify-center w-[20px] md:w-[40px]">
+                <div className="absolute left-1/2 z-10 h-[8px] w-[20px] -translate-x-1/2 transform cursor-pointer md:w-[40px]">
+                  <div className="flex w-[20px] flex-row justify-center md:w-[40px]">
                     <div className="flex justify-center">
                       <div
-                        className="absolute left-1/2 transform -translate-x-1/2 w-[8px] h-[8px] ml-[2px] z-10 cursor-pointer"
+                        className="absolute left-1/2 z-10 ml-[2px] h-[8px] w-[8px] -translate-x-1/2 transform cursor-pointer"
                         data-severity={severityValue}
                       >
                         <div
                           key={`${segmentKey}_${index}_primary_data`}
-                          className={`w-full h-[8px] bg-gradient-to-r ${roundBottomPrimary ? "rounded-bl-full rounded-br-full" : ""} ${roundTopPrimary ? "rounded-tl-full rounded-tr-full" : ""} ${severityColors[severityValue]}`}
+                          className={`h-[8px] w-full bg-gradient-to-r ${roundBottomPrimary ? "rounded-bl-full rounded-br-full" : ""} ${roundTopPrimary ? "rounded-tl-full rounded-tr-full" : ""} ${severityColors[severityValue]}`}
                         ></div>
                       </div>
                     </div>
@@ -247,7 +287,7 @@ export function EventSegment({
               </HoverCardTrigger>
               <HoverCardPortal>
                 <HoverCardContent
-                  className="rounded-2xl w-[250px] p-2"
+                  className="w-[250px] rounded-lg p-2 md:rounded-2xl"
                   side="left"
                 >
                   <img
