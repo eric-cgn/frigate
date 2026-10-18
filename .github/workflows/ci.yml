@@ -6,6 +6,7 @@ on:
     branches:
       - dev
       - master
+      - rocm-update
     paths-ignore:
       - "docs/**"
 
@@ -19,6 +20,7 @@ env:
 
 jobs:
   amd64_build:
+    if: false
     runs-on: ubuntu-22.04
     name: AMD64 Build
     steps:
@@ -43,6 +45,7 @@ jobs:
           cache-from: type=registry,ref=${{ steps.setup.outputs.cache-name }}-amd64
           cache-to: type=registry,ref=${{ steps.setup.outputs.cache-name }}-amd64,mode=max
   smoke_test:
+    if: false
     runs-on: ubuntu-22.04
     name: AMD64 Smoke Test
     needs:
@@ -422,6 +425,7 @@ jobs:
         if: always()
         run: docker rm -f frigate || true
   arm64_build:
+    if: false
     runs-on: ubuntu-22.04-arm
     name: ARM Build
     steps:
@@ -457,6 +461,7 @@ jobs:
             *.cache-from=type=registry,ref=${{ steps.setup.outputs.cache-name }}-arm64
             *.cache-to=type=registry,ref=${{ steps.setup.outputs.cache-name }}-arm64,mode=max
   jetson_jp6_build:
+    if: false
     runs-on: ubuntu-22.04-arm
     name: Jetson Jetpack 6
     steps:
@@ -486,6 +491,7 @@ jobs:
             *.cache-from=type=registry,ref=${{ steps.setup.outputs.cache-name }}-jp6
             *.cache-to=type=registry,ref=${{ steps.setup.outputs.cache-name }}-jp6,mode=max
   amd64_extra_builds:
+    if: false
     runs-on: ubuntu-22.04
     name: AMD64 Extra Build
     needs:
